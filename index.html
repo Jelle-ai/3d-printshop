@@ -78,7 +78,7 @@
       <span class="font-display">LayerCraft</span>
     </button>
     <nav>
-      <button class="navbtn hide-sm" onclick="go('custom')">⬆ Eigen model</button>
+      <button class="navbtn" onclick="go('custom')">⬆ <span class="hide-sm">Eigen model</span></button>
       <button class="navbtn rel" onclick="go('cart')">🛒 <span class="hide-sm">Winkelwagen</span>
         <span id="cartBadge" class="qty-badge hidden">0</span>
       </button>
@@ -295,8 +295,8 @@ function renderAuthNav(){
   const el = document.getElementById('authNav');
   if (state.user){
     el.innerHTML = `
-      <button class="navbtn hide-sm" onclick="go('account')">👤 ${esc(state.profile?.name||'Account')}</button>
-      ${state.profile?.isAdmin ? `<button class="navbtn hide-sm" style="color:var(--teal)" onclick="go('admin')">⚙ Beheer</button>` : ``}
+      <button class="navbtn" onclick="go('account')">👤 <span class="hide-sm">${esc(state.profile?.name||'Account')}</span></button>
+      ${state.profile?.isAdmin ? `<button class="navbtn" style="color:var(--teal)" onclick="go('admin')">⚙ <span class="hide-sm">Beheer</span></button>` : ``}
       <button class="navbtn" onclick="window.__logout()" title="Uitloggen">⎋</button>
     `;
   } else {
