@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>LayerCraft — 3D-prints op maat</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#15171b; --surface:#1e2126; --surface2:#262a30;
+    --text:#F2F1ED; --muted:#8B8F98; --orange:#FF6B35; --teal:#2EC4B6;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;}
+  .font-display{font-family:'Space Grotesk',sans-serif;font-weight:700;}
+  .font-mono{font-family:'JetBrains Mono',monospace;}
+  a{color:inherit;}
+  button, select, input, textarea{font-family:'Inter',sans-serif;font-size:14px;}
+  button{cursor:pointer;}
+  header{position:sticky;top:0;z-index:30;background:var(--bg);border-bottom:1px solid var(--surface2);}
+  .header-inner{max-width:960px;margin:0 auto;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;}
+  .brand{display:flex;align-items:center;gap:8px;background:none;border:none;color:var(--text);}
+  .brand span{font-size:18px;}
+  .navbtn{display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:8px;background:transparent;border:1px solid var(--surface2);color:var(--text);font-size:13px;}
+  .navbtn.primary{background:var(--orange);color:#15171b;border:none;font-weight:600;}
+  nav{display:flex;align-items:center;gap:8px;}
+  main{max-width:960px;margin:0 auto;padding:0 20px 96px;}
+  .hero{display:flex;flex-wrap:wrap;align-items:center;gap:32px;padding:48px 0;}
+  .hero h1{font-size:32px;line-height:1.2;margin:0 0 12px;}
+  .hero p{color:var(--muted);max-width:420px;margin:0 0 20px;}
+  .eyebrow{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--teal);margin:0 0 10px;}
+  .layers{position:relative;height:160px;width:160px;flex-shrink:0;}
+  .layers-inner{position:absolute;inset:0;display:flex;flex-direction:column-reverse;align-items:center;}
+  .layer{height:14px;border-radius:2px;margin-bottom:2px;animation:rise .9s ease-out both;}
+  @keyframes rise{from{transform:translateY(14px);opacity:0}to{transform:translateY(0)}}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;}
+  @media(min-width:640px){.grid{grid-template-columns:repeat(3,1fr);}}
+  .card{text-align:left;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px;background:var(--surface);border:1px solid var(--surface2);color:var(--text);}
+  .thumb{width:100%;aspect-ratio:1/1;border-radius:8px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:32px;}
+  .price{font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--teal);}
+  .muted{color:var(--muted);}
+  .spec-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0;font-family:'JetBrains Mono',monospace;font-size:12px;}
+  .spec{background:var(--surface);border:1px solid var(--surface2);border-radius:8px;padding:10px;}
+  .spec .label{color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.06em;display:block;margin-bottom:4px;}
+  input, textarea, select.field{width:100%;background:var(--surface);border:1px solid var(--surface2);color:var(--text);border-radius:8px;padding:9px 11px;margin-bottom:10px;}
+  label.field-label{font-size:12px;color:var(--muted);display:block;margin-bottom:4px;}
+  .btn{padding:10px 16px;border-radius:8px;border:none;font-weight:600;font-size:14px;}
+  .btn-orange{background:var(--orange);color:#15171b;}
+  .btn-outline{background:transparent;border:1px solid var(--surface2);color:var(--text);}
+  .row{display:flex;align-items:center;gap:10px;}
+  .between{display:flex;align-items:center;justify-content:space-between;}
+  .back{background:none;border:none;color:var(--muted);font-size:13px;display:flex;align-items:center;gap:4px;padding:0;margin-bottom:14px;}
+  .cart-item, .order-card, .admin-row{background:var(--surface);border:1px solid var(--surface2);border-radius:10px;padding:12px 14px;}
+  .badge{font-family:'JetBrains Mono',monospace;font-size:11px;padding:4px 10px;border-radius:999px;background:var(--surface2);color:var(--teal);}
+  .upload-box{display:flex;flex-direction:column;align-items:center;gap:8px;border:1.5px dashed var(--surface2);border-radius:12px;padding:32px;text-align:center;background:var(--surface);}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--teal);padding:12px 16px;border-radius:10px;font-size:13px;z-index:50;}
+  .tabs{display:flex;gap:8px;margin-bottom:20px;}
+  .tab{padding:6px 12px;border-radius:8px;font-size:13px;background:transparent;border:1px solid var(--surface2);color:var(--muted);}
+  .tab.active{background:var(--surface2);color:var(--teal);}
+  .stepper{display:flex;align-items:center;border:1px solid var(--surface2);border-radius:8px;overflow:hidden;}
+  .stepper button{width:32px;height:36px;background:var(--surface);border:none;color:var(--text);}
+  .stepper span{width:32px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:14px;}
+  .hidden{display:none !important;}
+  .qty-badge{position:absolute;top:-6px;right:-6px;background:var(--orange);color:#15171b;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;border-radius:999px;min-width:18px;height:18px;display:flex;align-items:center;justify-content:center;}
+  .rel{position:relative;}
+  .checkbox-row{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-bottom:10px;}
+  .footer-note{font-size:11px;color:var(--muted);margin-top:12px;display:flex;gap:6px;}
+  @media(max-width:640px){.hide-sm{display:none;}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <button class="brand" onclick="go('shop')">
+      <span style="color:var(--orange);font-size:20px;">◫</span>
+      <span class="font-display">LayerCraft</span>
+    </button>
+    <nav>
+      <button class="navbtn hide-sm" onclick="go('custom')">⬆ Eigen model</button>
+      <button class="navbtn rel" onclick="go('cart')">🛒 <span class="hide-sm">Winkelwagen</span>
+        <span id="cartBadge" class="qty-badge hidden">0</span>
+      </button>
+      <span id="authNav"></span>
+    </nav>
+  </div>
+</header>
+
+<main id="app"></main>
+<div id="toast" class="toast hidden"></div>
+
+<!-- Firebase SDK (modular, v10) -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {
+  getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
+  onAuthStateChanged, signOut
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {
+  getFirestore, collection, doc, setDoc, getDoc, addDoc, updateDoc, deleteDoc,
+  onSnapshot, query, where, orderBy, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {
+  getStorage, ref, uploadBytes, getDownloadURL
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+
+/* =====================================================================
+   1) VUL HIER JOUW FIREBASE CONFIG IN (Firebase Console > Project settings)
+   ===================================================================== */
+const firebaseConfig = {
+  apiKey: "VUL_IN",
+  authDomain: "VUL_IN.firebaseapp.com",
+  projectId: "VUL_IN",
+  storageBucket: "VUL_IN.appspot.com",
+  messagingSenderId: "VUL_IN",
+  appId: "VUL_IN",
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const storage = getStorage(app);
+
+/* --------------------------- constants --------------------------- */
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8MB (Firebase Storage, not Firestore, so bigger is fine)
+const SHIPPING_RATES = [
+  { country: "België", price: 4.95 },
+  { country: "Nederland", price: 7.95 },
+  { country: "Duitsland", price: 7.95 },
+  { country: "Frankrijk", price: 7.95 },
+  { country: "Andere EU-landen", price: 12.95 },
+  { country: "Buiten de EU", price: 24.95 },
+];
+
+function fmtEUR(n){ return new Intl.NumberFormat("nl-BE",{style:"currency",currency:"EUR"}).format(n); }
+function notify(msg){
+  const t = document.getElementById('toast');
+  t.textContent = "✓ " + msg;
+  t.classList.remove('hidden');
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer = setTimeout(()=>t.classList.add('hidden'), 3000);
+}
+
+/* --------------------------- state --------------------------- */
+let state = {
+  view: "shop",
+  products: [],
+  orders: [],
+  cart: JSON.parse(sessionStorage.getItem('lc_cart') || "[]"),
+  user: null,       // firebase auth user
+  profile: null,    // {name, address, isAdmin}
+  selectedProduct: null,
+};
+
+function saveCart(){ sessionStorage.setItem('lc_cart', JSON.stringify(state.cart)); }
+function cartTotal(){ return state.cart.reduce((s,i)=>s+i.price*i.qty,0); }
+function cartCount(){ return state.cart.reduce((s,i)=>s+i.qty,0); }
+
+function go(view, extra){
+  state.view = view;
+  if (extra) Object.assign(state, extra);
+  render();
+  window.scrollTo(0,0);
+}
+window.go = go;
+
+/* --------------------------- auth --------------------------- */
+onAuthStateChanged(auth, async (u) => {
+  state.user = u;
+  if (u) {
+    const snap = await getDoc(doc(db, "users", u.uid));
+    state.profile = snap.exists() ? snap.data() : null;
+    listenOrders();
+    listenProducts(); // re-listen (admin sees all)
+  } else {
+    state.profile = null;
+    state.orders = [];
+    listenProducts();
+  }
+  renderAuthNav();
+  render();
+});
+
+async function doRegister(name, email, password, address){
+  try{
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    const profile = { name, email, address, isAdmin: false, createdAt: Date.now() };
+    await setDoc(doc(db, "users", cred.user.uid), profile);
+    notify("Account aangemaakt — welkom " + name);
+    go("shop");
+  }catch(e){ notify("Fout: " + (e.message || e)); }
+}
+async function doLogin(email, password){
+  try{
+    await signInWithEmailAndPassword(auth, email, password);
+    notify("Ingelogd");
+    go("shop");
+  }catch(e){ notify("Fout: " + (e.message || e)); }
+}
+async function doLogout(){
+  await signOut(auth);
+  notify("Uitgelogd");
+  go("shop");
+}
+
+/* --------------------------- products (realtime) --------------------------- */
+function listenProducts(){
+  const q = query(collection(db, "products"), orderBy("name"));
+  onSnapshot(q, (snap) => {
+    state.products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (state.view === "shop" || state.view === "product" || state.view === "admin") render();
+  }, (err) => notify("Kan producten niet laden: " + err.message));
+}
+
+async function seedIfEmpty(){
+  const snap = await getDoc(doc(db, "meta", "seeded"));
+  if (snap.exists()) return;
+  const seed = [
+    { name:"Sleutelhanger — Geometrisch", price:6.5, material:"PLA", infill:"20%", layerHeight:"0.2mm", description:"Compacte low-poly sleutelhanger.", stock:40, icon:"🔑" },
+    { name:"Plantenvaas — Spiraal", price:18.0, material:"PETG", infill:"vase mode", layerHeight:"0.16mm", description:"Waterdichte vaas, één doorlopende wand.", stock:15, icon:"🏺" },
+    { name:"Telefoonstandaard", price:9.9, material:"PLA", infill:"35%", layerHeight:"0.2mm", description:"Stevige standaard voor de meeste telefoons.", stock:25, icon:"📱" },
+  ];
+  for (const p of seed) await addDoc(collection(db,"products"), p);
+  await setDoc(doc(db,"meta","seeded"), { done:true });
+}
+
+/* --------------------------- orders (realtime) --------------------------- */
+let unsubOrders = null;
+function listenOrders(){
+  if (unsubOrders) unsubOrders();
+  if (!state.user) return;
+  const base = collection(db, "orders");
+  const q = state.profile?.isAdmin
+    ? query(base, orderBy("createdAt","desc"))
+    : query(base, where("uid","==",state.user.uid), orderBy("createdAt","desc"));
+  unsubOrders = onSnapshot(q, (snap) => {
+    state.orders = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+    if (state.view === "account" || state.view === "admin") render();
+    // subtle live notification for admin
+    if (state.profile?.isAdmin && document.__firstOrderLoad !== false) document.__firstOrderLoad = false;
+  }, (err) => notify("Kan bestellingen niet laden: " + err.message));
+}
+
+async function placeOrder(shippingCountry, address){
+  if (!state.user){ notify("Log in om te bestellen"); go("login"); return; }
+  const rate = SHIPPING_RATES.find(r=>r.country===shippingCountry) || SHIPPING_RATES[0];
+  const order = {
+    uid: state.user.uid,
+    userEmail: state.user.email,
+    items: state.cart.map(({id,kind,name,price,qty})=>({id,kind,name,price,qty})),
+    shippingCountry, shippingAddress: address,
+    shippingCost: rate.price,
+    subtotal: cartTotal(),
+    total: cartTotal() + rate.price,
+    status: "In verwerking",
+    createdAt: Date.now(),
+  };
+  try{
+    await addDoc(collection(db,"orders"), order);
+    state.cart = []; saveCart();
+    notify("Bestelling geplaatst!");
+    go("account");
+  }catch(e){ notify("Bestellen mislukt: " + e.message); }
+}
+async function setOrderStatus(orderId, status){
+  await updateDoc(doc(db,"orders",orderId), { status });
+}
+
+/* --------------------------- products admin --------------------------- */
+async function addProduct(p){
+  await addDoc(collection(db,"products"), p);
+  notify("Product toegevoegd");
+}
+async function deleteProduct(id){
+  await deleteDoc(doc(db,"products",id));
+  notify("Product verwijderd");
+}
+
+/* --------------------------- cart --------------------------- */
+function addToCart(item){
+  const existing = state.cart.find(x=>x.id===item.id && x.kind===item.kind);
+  if (existing) existing.qty += item.qty; else state.cart.push(item);
+  saveCart();
+  notify(item.name + " toegevoegd");
+  renderCartBadge();
+}
+function removeFromCart(id,kind){ state.cart = state.cart.filter(x=>!(x.id===id&&x.kind===kind)); saveCart(); render(); }
+function setQty(id,kind,qty){ const it=state.cart.find(x=>x.id===id&&x.kind===kind); if(it) it.qty=Math.max(1,qty); saveCart(); render(); }
+window.__addToCart = addToCart; window.__removeFromCart = removeFromCart; window.__setQty = setQty;
+
+/* --------------------------- render: nav --------------------------- */
+function renderAuthNav(){
+  const el = document.getElementById('authNav');
+  if (state.user){
+    el.innerHTML = `
+      <button class="navbtn hide-sm" onclick="go('account')">👤 ${esc(state.profile?.name||'Account')}</button>
+      ${state.profile?.isAdmin ? `<button class="navbtn hide-sm" style="color:var(--teal)" onclick="go('admin')">⚙ Beheer</button>` : ``}
+      <button class="navbtn" onclick="window.__logout()" title="Uitloggen">⎋</button>
+    `;
+  } else {
+    el.innerHTML = `<button class="navbtn primary" onclick="go('login')">👤 Account</button>`;
+  }
+}
+window.__logout = doLogout;
+
+function renderCartBadge(){
+  const b = document.getElementById('cartBadge');
+  const c = cartCount();
+  if (c>0){ b.textContent=c; b.classList.remove('hidden'); } else b.classList.add('hidden');
+}
+
+function esc(s=""){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+/* --------------------------- render: views --------------------------- */
+function render(){
+  renderCartBadge();
+  const app = document.getElementById('app');
+  switch(state.view){
+    case "shop": app.innerHTML = viewShop(); break;
+    case "product": app.innerHTML = viewProduct(); attachProductHandlers(); return;
+    case "custom": app.innerHTML = viewCustom(); attachCustomHandlers(); return;
+    case "cart": app.innerHTML = viewCart(); break;
+    case "checkout": app.innerHTML = viewCheckout(); attachCheckoutHandlers(); return;
+    case "login": app.innerHTML = viewAuth(state.__authMode || "login"); attachAuthHandlers(); return;
+    case "account": app.innerHTML = viewAccount(); break;
+    case "admin": app.innerHTML = viewAdmin(); attachAdminHandlers(); return;
+  }
+  attachShopHandlers();
+}
+
+function viewShop(){
+  const layerColors = ["var(--orange)","var(--teal)"];
+  const layers = Array.from({length:8}).map((_,i)=>`<div class="layer" style="width:${100-i*7}%;background:${layerColors[i%2]};opacity:${0.3+(i/8)*0.7};animation-delay:${i*0.1}s"></div>`).join("");
+  const cards = state.products.map(p => `
+    <button class="card" data-open="${p.id}">
+      <div class="thumb">${p.icon || "📦"}</div>
+      <div>
+        <div style="font-size:14px;">${esc(p.name)}</div>
+        <div class="muted font-mono" style="font-size:11px;margin-top:4px;">${esc(p.material)} · ${esc(p.layerHeight)}</div>
+        <div class="price" style="margin-top:6px;">${fmtEUR(p.price)}</div>
+      </div>
+    </button>`).join("");
+  return `
+    <section class="hero">
+      <div class="layers"><div class="layers-inner">${layers}</div></div>
+      <div>
+        <p class="eyebrow">FDM &amp; resin print-on-demand</p>
+        <h1 class="font-display">Kies een model, of print jouw eigen ontwerp.</h1>
+        <p>Bestel uit onze collectie of upload je eigen STL/OBJ-bestand. Wij printen het en sturen het naar jouw adres.</p>
+        <button class="btn btn-orange" onclick="go('custom')">⬆ Upload je eigen model</button>
+      </div>
+    </section>
+    <div class="between" style="margin-bottom:14px;">
+      <h2 class="font-display" style="font-size:20px;">Collectie</h2>
+      <span class="muted font-mono" style="font-size:12px;">${state.products.length} producten</span>
+    </div>
+    <div class="grid">${cards || `<p class="muted" style="grid-column:1/-1;">Nog geen producten.</p>`}</div>
+  `;
+}
+function attachShopHandlers(){
+  document.querySelectorAll('[data-open]').forEach(btn=>{
+    btn.onclick = () => {
+      state.selectedProduct = state.products.find(p=>p.id===btn.dataset.open);
+      go("product");
+    };
+  });
+}
+
+function viewProduct(){
+  const p = state.selectedProduct;
+  if (!p) return `<p class="muted">Product niet gevonden.</p>`;
+  return `
+    <div style="padding:32px 0;">
+      <button class="back" onclick="go('shop')">← Terug naar collectie</button>
+      <div style="display:grid;grid-template-columns:1fr;gap:32px;">
+        <div class="thumb" style="aspect-ratio:1/1;font-size:64px;">${p.icon||"📦"}</div>
+        <div>
+          <h1 class="font-display" style="font-size:24px;">${esc(p.name)}</h1>
+          <p class="muted" style="font-size:14px;">${esc(p.description||"")}</p>
+          <div class="spec-grid">
+            <div class="spec"><span class="label">Materiaal</span>${esc(p.material)}</div>
+            <div class="spec"><span class="label">Infill</span>${esc(p.infill)}</div>
+            <div class="spec"><span class="label">Laaghoogte</span>${esc(p.layerHeight)}</div>
+          </div>
+          <p class="price" style="font-size:22px;">${fmtEUR(p.price)}</p>
+          <p class="muted" style="font-size:12px;margin-bottom:16px;">${p.stock>0 ? p.stock+" op voorraad" : "Niet op voorraad"}</p>
+          <div class="row">
+            <div class="stepper"><button id="qMinus">−</button><span id="qVal">1</span><button id="qPlus">+</button></div>
+            <button class="btn btn-orange" id="addBtn" ${p.stock<=0?"disabled":""}>🛒 Toevoegen</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+function attachProductHandlers(){
+  let qty = 1;
+  const qv = document.getElementById('qVal');
+  document.getElementById('qMinus').onclick = ()=>{ qty=Math.max(1,qty-1); qv.textContent=qty; };
+  document.getElementById('qPlus').onclick = ()=>{ qty++; qv.textContent=qty; };
+  document.getElementById('addBtn').onclick = ()=>{
+    const p = state.selectedProduct;
+    addToCart({ id:p.id, kind:"product", name:p.name, price:p.price, qty });
+  };
+}
+
+function viewCustom(){
+  return `
+    <div style="padding:32px 0;max-width:480px;">
+      <button class="back" onclick="go('shop')">← Terug naar collectie</button>
+      <h1 class="font-display" style="font-size:22px;">Upload je eigen model</h1>
+      <p class="muted" style="font-size:13px;margin-bottom:20px;">We printen je bestand en sturen het naar je adres. De prijs is een automatische schatting — de shop kan dit na controle aanpassen.</p>
+      <label class="upload-box" for="fileInput">
+        <span style="font-size:26px;">⬆</span>
+        <span id="fileLabel" style="font-size:14px;">Klik om een .stl, .obj of .3mf bestand te kiezen</span>
+        <span class="muted font-mono" style="font-size:11px;">max 8MB</span>
+        <input type="file" id="fileInput" accept=".stl,.obj,.3mf" style="display:none;" />
+      </label>
+      <div id="customForm" class="hidden">
+        <label class="field-label">Materiaal</label>
+        <select class="field" id="customMaterial">
+          <option>PLA</option><option>PLA+</option><option>PETG</option><option>ABS</option><option>Resin</option>
+        </select>
+        <label class="field-label">Geschatte prijs</label>
+        <p class="price" id="estPrice" style="font-size:18px;"></p>
+        <textarea id="customNotes" rows="3" placeholder="Opmerkingen (kleur, afwerking, schaal...)"></textarea>
+        <button class="btn btn-orange" id="customAddBtn">🛒 Toevoegen aan winkelwagen</button>
+      </div>
+    </div>`;
+}
+let __customFile = null;
+function attachCustomHandlers(){
+  const input = document.getElementById('fileInput');
+  input.onchange = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    if (!/\.(stl|obj|3mf)$/i.test(f.name)){ notify("Kies een .stl, .obj of .3mf bestand"); return; }
+    if (f.size > MAX_UPLOAD_BYTES){ notify("Bestand te groot (max 8MB)"); return; }
+    __customFile = f;
+    document.getElementById('fileLabel').textContent = f.name;
+    document.getElementById('customForm').classList.remove('hidden');
+    const est = Math.max(9.95, 9.95 + (f.size/1024)*0.03);
+    document.getElementById('estPrice').textContent = fmtEUR(est);
+    document.getElementById('customAddBtn').onclick = async () => {
+      if (!state.user){ notify("Log in om een eigen model te uploaden"); go("login"); return; }
+      const btn = document.getElementById('customAddBtn');
+      btn.disabled = true; btn.textContent = "Uploaden...";
+      try{
+        const path = `uploads/${state.user.uid}/${Date.now()}_${f.name}`;
+        const sref = ref(storage, path);
+        await uploadBytes(sref, f);
+        const url = await getDownloadURL(sref);
+        const material = document.getElementById('customMaterial').value;
+        const notes = document.getElementById('customNotes').value;
+        const uploadDoc = await addDoc(collection(db,"uploads"), {
+          uid: state.user.uid, fileName: f.name, fileSize: f.size,
+          material, notes, storageUrl: url, createdAt: Date.now(),
+        });
+        addToCart({
+          id: uploadDoc.id, kind:"custom",
+          name: "Eigen model — " + f.name,
+          price: Math.round(est*100)/100, qty: 1,
+        });
+        go("cart");
+      }catch(err){
+        notify("Upload mislukt: " + err.message);
+        btn.disabled = false; btn.textContent = "🛒 Toevoegen aan winkelwagen";
+      }
+    };
+  };
+}
+
+function viewCart(){
+  if (state.cart.length===0){
+    return `<div style="padding:32px 0;"><button class="back" onclick="go('shop')">← Verder winkelen</button><h1 class="font-display" style="font-size:22px;">Winkelwagen</h1><p class="muted">Je winkelwagen is leeg.</p></div>`;
+  }
+  const items = state.cart.map(it=>`
+    <div class="cart-item row between" style="margin-bottom:10px;">
+      <div class="row" style="flex:1;">
+        <div class="thumb" style="width:44px;height:44px;font-size:18px;">${it.kind==='custom'?'📄':'📦'}</div>
+        <div>
+          <div style="font-size:13px;">${esc(it.name)}</div>
+          <div class="muted font-mono" style="font-size:11px;">${fmtEUR(it.price)} / stuk</div>
+        </div>
+      </div>
+      <div class="stepper">
+        <button onclick="window.__setQty('${it.id}','${it.kind}',${it.qty-1})">−</button>
+        <span>${it.qty}</span>
+        <button onclick="window.__setQty('${it.id}','${it.kind}',${it.qty+1})">+</button>
+      </div>
+      <button class="navbtn" onclick="window.__removeFromCart('${it.id}','${it.kind}')">🗑</button>
+    </div>`).join("");
+  return `
+    <div style="padding:32px 0;max-width:480px;">
+      <button class="back" onclick="go('shop')">← Verder winkelen</button>
+      <h1 class="font-display" style="font-size:22px;margin-bottom:16px;">Winkelwagen</h1>
+      ${items}
+      <div class="between font-mono" style="margin:16px 0;"><span class="muted">Subtotaal</span><span>${fmtEUR(cartTotal())}</span></div>
+      <button class="btn btn-orange" style="width:100%;" onclick="go(${state.user ? "'checkout'" : "'login'"})">Afrekenen</button>
+    </div>`;
+}
+
+function viewCheckout(){
+  const addr = state.profile?.address || {};
+  const options = SHIPPING_RATES.map(r=>`<option value="${r.country}">${r.country} — ${fmtEUR(r.price)}</option>`).join("");
+  return `
+    <div style="padding:32px 0;max-width:480px;">
+      <button class="back" onclick="go('cart')">← Terug naar winkelwagen</button>
+      <h1 class="font-display" style="font-size:22px;margin-bottom:16px;">Afrekenen</h1>
+      <input id="ckStreet" placeholder="Straat + nr" value="${esc(addr.street||'')}" />
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <input id="ckZip" placeholder="Postcode" value="${esc(addr.zip||'')}" />
+        <input id="ckCity" placeholder="Gemeente" value="${esc(addr.city||'')}" />
+      </div>
+      <label class="field-label">Land</label>
+      <select class="field" id="ckCountry">${options}</select>
+      <div class="cart-item font-mono" style="font-size:13px;margin:16px 0;">
+        <div class="between"><span class="muted">Subtotaal</span><span>${fmtEUR(cartTotal())}</span></div>
+        <div class="between"><span class="muted">Verzending</span><span id="ckShipVal">${fmtEUR(SHIPPING_RATES[0].price)}</span></div>
+        <div class="between" style="border-top:1px solid var(--surface2);margin-top:6px;padding-top:6px;color:var(--teal);"><span>Totaal</span><span id="ckTotalVal">${fmtEUR(cartTotal()+SHIPPING_RATES[0].price)}</span></div>
+      </div>
+      <button class="btn btn-orange" style="width:100%;" id="placeOrderBtn">Bestelling plaatsen</button>
+      <p class="footer-note">⚠ Demo-omgeving: er wordt geen echte betaling verwerkt.</p>
+    </div>`;
+}
+function attachCheckoutHandlers(){
+  const sel = document.getElementById('ckCountry');
+  const updateTotals = () => {
+    const rate = SHIPPING_RATES.find(r=>r.country===sel.value) || SHIPPING_RATES[0];
+    document.getElementById('ckShipVal').textContent = fmtEUR(rate.price);
+    document.getElementById('ckTotalVal').textContent = fmtEUR(cartTotal()+rate.price);
+  };
+  sel.onchange = updateTotals;
+  document.getElementById('placeOrderBtn').onclick = () => {
+    const street = document.getElementById('ckStreet').value.trim();
+    const zip = document.getElementById('ckZip').value.trim();
+    const city = document.getElementById('ckCity').value.trim();
+    if (!street || !zip || !city){ notify("Vul je adres volledig in"); return; }
+    placeOrder(sel.value, { street, zip, city });
+  };
+}
+
+function viewAuth(mode){
+  return `
+    <div style="padding:40px 0;max-width:360px;margin:0 auto;">
+      <h1 class="font-display" style="font-size:22px;">${mode==='login'?'Inloggen':'Account aanmaken'}</h1>
+      <p class="muted" style="font-size:13px;margin-bottom:20px;">${mode==='login'?'Log in om te bestellen.':'Maak een account om te bestellen.'}</p>
+      ${mode==='register' ? `<input id="regName" placeholder="Naam" />` : ``}
+      <input id="authEmail" type="email" placeholder="E-mailadres" />
+      <input id="authPassword" type="password" placeholder="Wachtwoord (min. 6 tekens)" />
+      ${mode==='register' ? `
+        <input id="regStreet" placeholder="Straat + nr" />
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <input id="regZip" placeholder="Postcode" />
+          <input id="regCity" placeholder="Gemeente" />
+        </div>` : ``}
+      <button class="btn btn-orange" style="width:100%;margin-top:6px;" id="authSubmit">${mode==='login'?'Inloggen':'Account aanmaken'}</button>
+      <button class="navbtn" style="width:100%;margin-top:12px;background:none;border:none;color:var(--teal);justify-content:center;" id="authSwitch">
+        ${mode==='login' ? 'Nog geen account? Registreer' : 'Al een account? Log in'}
+      </button>
+    </div>`;
+}
+function attachAuthHandlers(){
+  const mode = state.__authMode || "login";
+  document.getElementById('authSwitch').onclick = () => { state.__authMode = mode==='login' ? 'register' : 'login'; render(); };
+  document.getElementById('authSubmit').onclick = () => {
+    const email = document.getElementById('authEmail').value.trim();
+    const password = document.getElementById('authPassword').value;
+    if (mode==='login'){ doLogin(email,password); }
+    else{
+      const name = document.getElementById('regName').value.trim();
+      const street = document.getElementById('regStreet').value.trim();
+      const zip = document.getElementById('regZip').value.trim();
+      const city = document.getElementById('regCity').value.trim();
+      doRegister(name, email, password, {street,zip,city});
+    }
+  };
+}
+
+function viewAccount(){
+  const orders = state.orders.map(o=>`
+    <div class="order-card" style="margin-bottom:10px;">
+      <div class="between" style="margin-bottom:6px;">
+        <span class="muted font-mono" style="font-size:11px;">${new Date(o.createdAt).toLocaleDateString('nl-BE')}</span>
+        <span class="badge">${esc(o.status)}</span>
+      </div>
+      <div style="font-size:13px;margin-bottom:6px;">${o.items.map(i=>esc(i.name)).join(", ")}</div>
+      <div class="between font-mono" style="font-size:13px;"><span class="muted">Naar ${esc(o.shippingCountry)}</span><span>${fmtEUR(o.total)}</span></div>
+    </div>`).join("");
+  return `
+    <div style="padding:32px 0;max-width:480px;">
+      <h1 class="font-display" style="font-size:22px;">Hallo, ${esc(state.profile?.name||'')}</h1>
+      <p class="muted" style="font-size:13px;margin-bottom:20px;">${esc(state.user?.email||'')}</p>
+      <h2 class="font-display" style="font-size:16px;margin-bottom:10px;">Mijn bestellingen</h2>
+      ${orders || `<p class="muted" style="font-size:13px;">Nog geen bestellingen.</p>`}
+      <button class="navbtn" style="margin-top:16px;color:var(--orange);border:none;background:none;" onclick="go('shop')">← Terug naar de shop</button>
+    </div>`;
+}
+
+function viewAdmin(){
+  const tab = state.__adminTab || "products";
+  const productRows = state.products.map(p=>`
+    <div class="admin-row between" style="margin-bottom:8px;">
+      <div><div style="font-size:13px;">${esc(p.name)}</div><div class="muted font-mono" style="font-size:11px;">${fmtEUR(p.price)} · voorraad ${p.stock}</div></div>
+      <button class="navbtn" onclick="window.__deleteProduct('${p.id}')">🗑</button>
+    </div>`).join("");
+  const orderRows = state.orders.map(o=>`
+    <div class="admin-row" style="margin-bottom:10px;">
+      <div class="between" style="margin-bottom:6px;">
+        <div><div style="font-size:13px;font-weight:600;">${esc(o.userEmail)}</div><div class="muted font-mono" style="font-size:11px;">${new Date(o.createdAt).toLocaleString('nl-BE')}</div></div>
+        <select class="field" style="width:auto;margin:0;padding:5px 8px;font-size:12px;" onchange="window.__setStatus('${o.id}',this.value)">
+          ${["In verwerking","Wordt geprint","Verzonden","Geleverd"].map(s=>`<option ${s===o.status?'selected':''}>${s}</option>`).join("")}
+        </select>
+      </div>
+      <div style="font-size:13px;margin-bottom:4px;">${o.items.map(i=>`${i.qty}× ${esc(i.name)}`).join(", ")}</div>
+      <div class="between font-mono" style="font-size:11px;">
+        <span class="muted">${esc(o.shippingAddress?.street||'')}, ${esc(o.shippingAddress?.zip||'')} ${esc(o.shippingAddress?.city||'')}, ${esc(o.shippingCountry||'')}</span>
+        <span style="color:var(--teal);">${fmtEUR(o.total)}</span>
+      </div>
+    </div>`).join("");
+  return `
+    <div style="padding:32px 0;">
+      <h1 class="font-display" style="font-size:22px;">⚙ Shopbeheer</h1>
+      <p class="muted" style="font-size:13px;margin-bottom:20px;">Voeg producten toe en beheer bestellingen — live gedeeld met iedereen.</p>
+      <div class="tabs">
+        <button class="tab ${tab==='products'?'active':''}" onclick="window.__setAdminTab('products')">Producten</button>
+        <button class="tab ${tab==='orders'?'active':''}" onclick="window.__setAdminTab('orders')">Bestellingen (${state.orders.length})</button>
+      </div>
+      <div id="adminProducts" class="${tab==='products'?'':'hidden'}">
+        <div style="display:grid;grid-template-columns:1fr;gap:24px;">
+          <div>
+            <h2 class="font-display" style="font-size:15px;margin-bottom:10px;">+ Nieuw product</h2>
+            <input id="pName" placeholder="Naam" />
+            <textarea id="pDesc" rows="2" placeholder="Beschrijving"></textarea>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <input id="pPrice" type="number" step="0.01" placeholder="Prijs (€)" />
+              <input id="pStock" type="number" placeholder="Voorraad" value="10" />
+              <select class="field" id="pMaterial"><option>PLA</option><option>PLA+</option><option>PETG</option><option>ABS</option><option>Resin</option></select>
+              <input id="pLayer" placeholder="Laaghoogte" value="0.2mm" />
+            </div>
+            <button class="btn btn-orange" id="addProductBtn">Product toevoegen</button>
+          </div>
+          <div>
+            <h2 class="font-display" style="font-size:15px;margin-bottom:10px;">Huidige producten</h2>
+            ${productRows || `<p class="muted" style="font-size:13px;">Nog geen producten.</p>`}
+          </div>
+        </div>
+      </div>
+      <div id="adminOrders" class="${tab==='orders'?'':'hidden'}">
+        ${orderRows || `<p class="muted" style="font-size:13px;">Nog geen bestellingen.</p>`}
+      </div>
+    </div>`;
+}
+window.__deleteProduct = deleteProduct;
+window.__setStatus = setOrderStatus;
+window.__setAdminTab = (tab) => { state.__adminTab = tab; render(); };
+function attachAdminHandlers(){
+  const btn = document.getElementById('addProductBtn');
+  if (btn) btn.onclick = () => {
+    const name = document.getElementById('pName').value.trim();
+    const price = parseFloat(document.getElementById('pPrice').value);
+    if (!name || !price) { notify("Vul naam en prijs in"); return; }
+    addProduct({
+      name, price,
+      description: document.getElementById('pDesc').value.trim(),
+      stock: parseInt(document.getElementById('pStock').value,10)||0,
+      material: document.getElementById('pMaterial').value,
+      infill: "20%",
+      layerHeight: document.getElementById('pLayer').value.trim() || "0.2mm",
+      icon: "📦",
+    });
+    ["pName","pDesc","pPrice"].forEach(id=>document.getElementById(id).value="");
+  };
+}
+
+/* --------------------------- boot --------------------------- */
+seedIfEmpty();
+listenProducts();
+renderAuthNav();
+render();
+</script>
+</body>
+</html>
