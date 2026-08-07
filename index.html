@@ -84,7 +84,7 @@
   .iconbtn{
     width:40px;height:40px;display:flex;align-items:center;justify-content:center;
     border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);
-    border-radius:3px;font-size:15px;transition:background .12s,border-color .12s;
+    border-radius:10px;font-size:15px;transition:background .12s,border-color .12s;
   }
   .iconbtn:hover{background:var(--surface2);border-color:var(--ink);}
   .iconbtn.accent{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);}
@@ -99,13 +99,13 @@
   .menu-wrap{position:relative;}
   .menu-panel{
     position:absolute;right:0;top:calc(100% + 9px);min-width:250px;z-index:50;
-    background:var(--surface);border:1px solid var(--ink);border-radius:3px;
+    background:var(--surface);border:1px solid var(--ink);border-radius:14px;
     box-shadow:6px 6px 0 var(--ink);padding:6px;
   }
   :root[data-theme="dark"] .menu-panel{box-shadow:6px 6px 0 var(--line-strong);}
   .menu-item{
     display:flex;align-items:center;gap:11px;width:100%;padding:10px 11px;
-    background:none;border:none;border-radius:2px;font-size:14px;text-align:left;color:var(--ink);
+    background:none;border:none;border-radius:9px;font-size:14px;text-align:left;color:var(--ink);
   }
   .menu-item:hover{background:var(--surface2);}
   .menu-item i{width:16px;text-align:center;color:var(--muted);}
@@ -145,7 +145,7 @@
   /* ---------- knoppen ---------- */
   .btn{
     display:inline-flex;align-items:center;justify-content:center;gap:9px;
-    padding:12px 20px;border-radius:3px;border:1px solid var(--ink);
+    padding:12px 20px;border-radius:10px;border:1px solid var(--ink);
     font-weight:600;font-size:14px;background:var(--surface);color:var(--ink);
     transition:transform .1s, box-shadow .1s, background .12s;
   }
@@ -160,32 +160,32 @@
   .back:hover{color:var(--accent);}
 
   /* ---------- collectie ---------- */
-  .grid{display:grid;grid-template-columns:repeat(2,1fr);border-top:1px solid var(--line);border-left:1px solid var(--line);}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);border-top:1px solid var(--line);border-left:1px solid var(--line);border-radius:16px;overflow:hidden;}
   @media(min-width:760px){.grid{grid-template-columns:repeat(3,1fr);}}
   .card{
     text-align:left;border:none;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--paper);color:var(--ink);
     padding:14px;display:flex;flex-direction:column;gap:12px;transition:background .14s;
   }
   .card:hover{background:var(--surface);}
-  .thumb{width:100%;aspect-ratio:4/3;background:var(--plate);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;}
+  .thumb{position:relative;width:100%;aspect-ratio:4/3;border-radius:10px;background:var(--plate);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;}
   .thumb img{width:100%;height:100%;object-fit:cover;display:block;}
   .thumb i{font-size:30px;color:var(--muted);}
   .card-title{font-size:14px;font-weight:600;line-height:1.3;}
   .price{font-family:'IBM Plex Mono',monospace;font-weight:600;letter-spacing:-.02em;}
   .card .price{white-space:nowrap;font-size:15px;}
   .flag{
-    position:absolute;top:0;left:0;background:var(--accent);color:var(--accent-ink);
+    position:absolute;top:8px;left:8px;border-radius:999px;background:var(--accent);color:var(--accent-ink);
     font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;
     padding:4px 8px;
   }
 
   /* ---------- panelen ---------- */
-  .panel{background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:16px;}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;}
   .panel + .panel{margin-top:14px;}
   .panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--line);}
   .panel-title{font-family:'Archivo',sans-serif;font-weight:700;font-size:14px;letter-spacing:-.01em;}
   .cart-item, .order-card, .admin-row, .fil-block, .part-card{
-    background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:15px;
+    background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:15px;
   }
   .kv{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:4px 0;}
   .kv span:first-child{color:var(--muted);}
@@ -194,7 +194,7 @@
   /* ---------- formulieren ---------- */
   input, textarea, select.field{
     width:100%;background:var(--surface);border:1px solid var(--line-strong);color:var(--ink);
-    border-radius:3px;padding:10px 12px;margin-bottom:10px;transition:border-color .12s;
+    border-radius:9px;padding:10px 12px;margin-bottom:10px;transition:border-color .12s;
   }
   input:focus, textarea:focus, select.field:focus{outline:none;border-color:var(--accent);}
   label.field-label{
@@ -204,7 +204,7 @@
   .checkbox-row{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--muted);margin-bottom:10px;}
   .form-grid{display:grid;grid-template-columns:1fr;gap:0 12px;}
   @media(min-width:400px){.form-grid{grid-template-columns:1fr 1fr;}}
-  .stepper{display:flex;align-items:center;border:1px solid var(--line-strong);border-radius:3px;overflow:hidden;background:var(--surface);}
+  .stepper{display:flex;align-items:center;border:1px solid var(--line-strong);border-radius:10px;overflow:hidden;background:var(--surface);}
   .stepper button{width:36px;height:40px;background:transparent;border:none;color:var(--ink);font-size:12px;}
   .stepper button:hover{background:var(--surface2);}
   .stepper span{width:34px;text-align:center;font-family:'IBM Plex Mono',monospace;font-size:14px;}
@@ -219,15 +219,15 @@
   /* ---------- meldingen ---------- */
   .toast{
     position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);
-    border-radius:3px;padding:13px 18px;font-size:13px;z-index:60;max-width:calc(100vw - 32px);
+    border-radius:12px;padding:13px 18px;font-size:13px;z-index:60;max-width:calc(100vw - 32px);
     display:flex;align-items:center;gap:10px;
   }
   .toast i{color:var(--accent);}
-  .notice{border:1px solid var(--accent);border-left-width:3px;border-radius:3px;padding:13px 15px;background:var(--surface);}
+  .notice{border:1px solid var(--accent);border-left-width:3px;border-radius:12px;padding:13px 15px;background:var(--surface);}
   .notice-title{color:var(--accent);font-weight:600;font-size:13px;margin:0 0 6px;display:flex;align-items:center;gap:8px;}
   .badge{
     font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;
-    padding:4px 9px;border:1px solid var(--line-strong);border-radius:2px;color:var(--muted);
+    padding:4px 10px;border:1px solid var(--line-strong);border-radius:999px;color:var(--muted);
   }
   .badge-accent{border-color:var(--accent);color:var(--accent);}
   .footer-note{font-size:12px;color:var(--muted);margin-top:14px;display:flex;align-items:center;gap:8px;}
@@ -235,55 +235,55 @@
   /* ---------- product ---------- */
   .product-layout{display:grid;grid-template-columns:1fr;gap:30px;}
   @media(min-width:820px){.product-layout{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:52px;align-items:start;}}
-  .viewer{width:100%;aspect-ratio:1/1;background:var(--plate);border:1px solid var(--line);border-radius:3px;overflow:hidden;position:relative;}
+  .viewer{width:100%;aspect-ratio:1/1;background:var(--plate);border:1px solid var(--line);border-radius:16px;overflow:hidden;position:relative;}
   .viewer img{width:100%;height:100%;object-fit:cover;display:block;}
   .viewer canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab;}
   .viewer canvas:active{cursor:grabbing;}
   .viewer-tag{
-    position:absolute;left:0;bottom:0;background:var(--ink);color:var(--paper);
+    position:absolute;left:10px;bottom:10px;border-radius:999px;background:var(--ink);color:var(--paper);
     font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;padding:5px 10px;
   }
   .viewer-hint{
     position:absolute;right:8px;bottom:8px;color:var(--paper);opacity:.55;
     font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
   }
-  .strip{display:flex;gap:1px;margin-top:1px;background:var(--line);}
+  .strip{display:flex;gap:8px;margin-top:8px;}
   .strip button{
-    width:60px;height:60px;overflow:hidden;border:none;background:var(--plate);padding:0;flex-shrink:0;
+    width:60px;height:60px;overflow:hidden;border:none;border-radius:9px;background:var(--plate);padding:0;flex-shrink:0;
     position:relative;opacity:.5;transition:opacity .12s;
   }
   .strip button.active{opacity:1;}
   .strip button.active::after{content:"";position:absolute;inset:auto 0 0 0;height:2px;background:var(--accent);}
   .strip img{width:100%;height:100%;object-fit:cover;display:block;}
   .strip i{color:var(--muted);}
-  .spec-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin:20px 0;}
+  .spec-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:20px 0;}
   .spec{background:var(--surface);padding:11px 12px;}
   .spec .label{display:block;margin-bottom:3px;}
   .spec-val{font-family:'IBM Plex Mono',monospace;font-size:13px;}
   .stock-dot{display:inline-block;width:6px;height:6px;border-radius:999px;margin-right:7px;}
 
   /* ---------- filament ---------- */
-  .fil-types{display:flex;flex-wrap:wrap;gap:0;margin-bottom:14px;border:1px solid var(--line-strong);border-radius:3px;overflow:hidden;}
+  .fil-types{display:flex;flex-wrap:wrap;gap:0;margin-bottom:14px;border:1px solid var(--line-strong);border-radius:11px;overflow:hidden;}
   .fil-type{
     padding:8px 13px;font-size:12px;background:var(--surface);border:none;
     border-right:1px solid var(--line);color:var(--muted);flex:1 1 auto;
   }
   .fil-type:last-child{border-right:none;}
   .fil-type.active{background:var(--ink);color:var(--paper);font-weight:600;}
-  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(38px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);}
+  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(38px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:11px;overflow:hidden;}
   .swatch{position:relative;aspect-ratio:1/1;border:none;padding:0;}
   .swatch.active::after{content:"";position:absolute;inset:0;border:2px solid var(--accent);}
   .swatch .tick{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;}
   .fil-chosen{display:flex;align-items:center;gap:13px;margin-top:14px;padding-top:13px;border-top:1px solid var(--line);}
-  .fil-chip{width:44px;height:44px;border-radius:2px;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(128,128,128,.35);}
+  .fil-chip{width:44px;height:44px;border-radius:9px;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(128,128,128,.35);}
   .fil-sheen{background-image:linear-gradient(115deg,rgba(255,255,255,0) 28%,rgba(255,255,255,.5) 44%,rgba(255,255,255,0) 60%);}
   .fil-gloss{background-image:linear-gradient(115deg,rgba(255,255,255,0) 32%,rgba(255,255,255,.11) 46%,rgba(255,255,255,0) 60%);}
   .fil-row{display:flex;align-items:center;gap:11px;padding:8px 0;border-top:1px solid var(--line);}
   .fil-row:first-of-type{border-top:none;}
-  .fil-dot{width:26px;height:26px;border-radius:2px;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(128,128,128,.35);}
-  .toggle{width:42px;height:23px;border-radius:2px;border:1px solid var(--line-strong);background:var(--surface2);position:relative;flex-shrink:0;padding:0;}
+  .fil-dot{width:26px;height:26px;border-radius:7px;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(128,128,128,.35);}
+  .toggle{width:42px;height:23px;border-radius:999px;border:1px solid var(--line-strong);background:var(--surface2);position:relative;flex-shrink:0;padding:0;}
   .toggle.on{background:var(--accent);border-color:var(--accent);}
-  .toggle::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:17px;border-radius:1px;background:var(--surface);transition:left .12s;}
+  .toggle::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:17px;border-radius:999px;background:var(--surface);transition:left .12s;}
   .toggle.on::after{left:22px;background:var(--accent-ink);}
 
   /* ---------- opdracht met onderdelen ---------- */
@@ -295,14 +295,14 @@
   @media(min-width:640px){.part-body{grid-template-columns:minmax(0,260px) minmax(0,1fr);gap:24px;}}
   .part-price{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line);}
   .dropzone{
-    border:1px dashed var(--line-strong);border-radius:3px;padding:40px 24px;text-align:center;
+    border:1px dashed var(--line-strong);border-radius:16px;padding:40px 24px;text-align:center;
     background:var(--surface);display:flex;flex-direction:column;align-items:center;gap:10px;
     transition:border-color .12s,background .12s;
   }
   .dropzone:hover{border-color:var(--accent);}
   .dropzone i{font-size:26px;color:var(--muted);}
   .dropzone:hover i{color:var(--accent);}
-  .upload-box{border:1px dashed var(--line-strong);border-radius:3px;padding:40px 24px;text-align:center;background:var(--surface);display:flex;flex-direction:column;align-items:center;gap:10px;}
+  .upload-box{border:1px dashed var(--line-strong);border-radius:16px;padding:40px 24px;text-align:center;background:var(--surface);display:flex;flex-direction:column;align-items:center;gap:10px;}
 
   /* ---------- opvolging ---------- */
   .track{display:flex;margin:18px 0 12px;}
@@ -315,31 +315,31 @@
   .track-step.active .track-dot{background:var(--accent);border-color:var(--accent);width:15px;height:15px;}
   .track-label{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);line-height:1.3;display:block;padding:0 2px;}
   .track-step.active .track-label{color:var(--ink);font-weight:600;}
-  .eta{border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:3px;padding:12px 14px;font-size:13px;margin:14px 0;display:flex;align-items:flex-start;gap:10px;}
+  .eta{border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:12px;padding:12px 14px;font-size:13px;margin:14px 0;display:flex;align-items:flex-start;gap:10px;}
   .eta i{color:var(--accent);margin-top:2px;}
   .order-line{display:flex;align-items:center;gap:11px;padding:10px 0;border-top:1px solid var(--line);}
   .order-line:first-of-type{border-top:none;}
   .detail-toggle{background:none;border:none;color:var(--accent);font-size:12px;padding:10px 0 0;display:inline-flex;align-items:center;gap:7px;font-weight:600;}
 
   /* ---------- betaling ---------- */
-  .pay-card{background:var(--ink);color:var(--paper);border-radius:3px;padding:20px;margin-bottom:18px;}
+  .pay-card{background:var(--ink);color:var(--paper);border-radius:14px;padding:20px;margin-bottom:18px;}
   .pay-card .muted{color:rgba(240,239,234,.55);}
   .pay-strip{font-family:'IBM Plex Mono',monospace;font-size:17px;letter-spacing:.16em;margin:16px 0 6px;}
-  .demo-banner{border:1px solid var(--accent);border-left-width:3px;border-radius:3px;padding:13px 15px;font-size:12.5px;margin-bottom:18px;background:var(--surface);}
+  .demo-banner{border:1px solid var(--accent);border-left-width:3px;border-radius:12px;padding:13px 15px;font-size:12.5px;margin-bottom:18px;background:var(--surface);}
 
   /* ---------- beheer ---------- */
   .admin-split{display:grid;grid-template-columns:1fr;gap:28px;align-items:start;}
   @media(min-width:1000px){.admin-split{grid-template-columns:minmax(0,390px) minmax(0,1fr);gap:36px;}}
   @media(min-width:1000px){.admin-split > div:first-child{position:sticky;top:86px;}}
   .img-tray{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
-  .img-slot{position:relative;width:62px;height:62px;border-radius:2px;overflow:hidden;border:1px solid var(--line);background:var(--surface2);}
+  .img-slot{position:relative;width:62px;height:62px;border-radius:9px;overflow:hidden;border:1px solid var(--line);background:var(--surface2);}
   .img-slot img{width:100%;height:100%;object-fit:cover;display:block;}
-  .img-slot button{position:absolute;top:2px;right:2px;width:19px;height:19px;border-radius:2px;border:none;background:var(--ink);color:var(--paper);font-size:10px;display:flex;align-items:center;justify-content:center;padding:0;}
-  .img-add{width:62px;height:62px;border-radius:2px;border:1px dashed var(--line-strong);background:var(--surface);color:var(--muted);font-size:15px;display:flex;align-items:center;justify-content:center;}
+  .img-slot button{position:absolute;top:3px;right:3px;width:19px;height:19px;border-radius:999px;border:none;background:var(--ink);color:var(--paper);font-size:10px;display:flex;align-items:center;justify-content:center;padding:0;}
+  .img-add{width:62px;height:62px;border-radius:9px;border:1px dashed var(--line-strong);background:var(--surface);color:var(--muted);font-size:15px;display:flex;align-items:center;justify-content:center;}
   .img-add:hover{border-color:var(--accent);color:var(--accent);}
   .admin-row{display:flex;align-items:center;gap:11px;margin-bottom:8px;}
-  .admin-row img{width:42px;height:42px;border-radius:2px;object-fit:cover;display:block;}
-  .admin-thumb{width:42px;height:42px;border-radius:2px;background:var(--plate);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;color:var(--muted);}
+  .admin-row img{width:42px;height:42px;border-radius:8px;object-fit:cover;display:block;}
+  .admin-thumb{width:42px;height:42px;border-radius:8px;background:var(--plate);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;color:var(--muted);}
 
   /* ---------- skelet ---------- */
   .skel{background:var(--surface2);position:relative;overflow:hidden;}
@@ -1391,8 +1391,7 @@ function render(){
 function viewShop(){
   const cards = state.products.map(p => `
     <button class="card rel" data-open="${p.id}">
-      ${p.featured ? `<span class="flag">Uitgelicht</span>` : ``}
-      <div class="thumb">${productThumb(p)}</div>
+      <div class="thumb rel">${productThumb(p)}${p.featured ? `<span class="flag">Uitgelicht</span>` : ``}</div>
       <div>
         <div class="card-title">${esc(p.name)}</div>
         <div class="label" style="margin-top:5px;">${esc(p.material||"")}${p.layerHeight ? " / " + esc(p.layerHeight) : ""}</div>
@@ -2147,17 +2146,39 @@ async function addJobToCart(btn){
   btn.disabled = true;
   btn.textContent = "Uploaden…";
   try{
-    const { getStorage, ref, uploadBytes, getDownloadURL } = await loadStorage();
+    const { getStorage, ref, uploadBytesResumable, getDownloadURL } = await loadStorage();
     const store = getStorage(app);
+    // Firebase probeert een mislukte upload standaard tot tien minuten opnieuw.
+    // Zolang Storage niet is ingesteld blijft de knop dan eindeloos hangen;
+    // met deze grenzen weet je binnen een halve minuut waar je aan toe bent.
+    store.maxUploadRetryTime = 25000;
+    store.maxOperationRetryTime = 15000;
+
+    const totalBytes = ready.reduce((s, p) => s + p.fileSize, 0);
+    let doneBytes = 0;
+    const showProgress = (extra) => {
+      const pct = totalBytes ? Math.min(100, Math.round((doneBytes + extra) / totalBytes * 100)) : 0;
+      btn.innerHTML = `${ic("spinner")} Uploaden… ${pct}%`;
+    };
     const stamp = Date.now();
     const uploaded = [];
 
     for (let i = 0; i < ready.length; i++){
       const part = ready[i];
-      btn.textContent = `Uploaden… ${i + 1}/${ready.length}`;
+      showProgress(0);
       const path = `uploads/${state.user.uid}/${stamp}_${i}_${part.fileName}`;
       const sref = ref(store, path);
-      await uploadBytes(sref, part.file);
+      // Resumable geeft ons voortgang terug, zodat een groot bestand niet
+      // aanvoelt als een knop die niets doet.
+      const task = uploadBytesResumable(sref, part.file);
+      await new Promise((resolve, reject) => {
+        task.on('state_changed',
+          snap => showProgress(snap.bytesTransferred),
+          reject,
+          resolve);
+      });
+      doneBytes += part.fileSize;
+      showProgress(0);
       const url = await getDownloadURL(sref);
       const est = partEstimate(part);
       const f = partFilament(part);
@@ -2208,8 +2229,12 @@ async function addJobToCart(btn){
     let msg = err.message || String(err);
     if (/storage\/unauthorized|storage\/unauthenticated/.test(code)) {
       msg = "Geen toegang tot de opslag — controleer de Storage-regels in Firebase.";
-    } else if (/storage\/unknown|storage\/retry-limit|storage\/bucket-not-found|storage\/project-not-found/.test(code)) {
+    } else if (/storage\/retry-limit/.test(code)) {
+      msg = "De opslag antwoordt niet. Meestal betekent dat Storage nog niet is ingesteld in Firebase (Build → Storage); anders was je verbinding te traag.";
+    } else if (/storage\/unknown|storage\/bucket-not-found|storage\/project-not-found/.test(code)) {
       msg = "De bestandsopslag is nog niet ingesteld in Firebase (Build → Storage).";
+    } else if (/storage\/quota-exceeded/.test(code)) {
+      msg = "De opslaglimiet van het Firebase-project is bereikt.";
     }
     notify("Uploaden mislukt: " + msg);
     btn.disabled = false;
