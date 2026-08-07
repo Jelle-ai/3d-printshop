@@ -117,6 +117,28 @@
   .detail-toggle{background:none;border:none;color:var(--teal);font-size:12px;padding:8px 0 0;display:flex;align-items:center;gap:5px;}
   .kv{display:flex;justify-content:space-between;gap:12px;font-size:12px;padding:3px 0;}
   .kv span:first-child{color:var(--muted);}
+  /* --- filamentkiezer --- */
+  .fil-block{background:var(--surface);border:1px solid var(--surface2);border-radius:12px;padding:14px;margin:18px 0;}
+  .fil-types{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
+  .fil-type{padding:6px 11px;border-radius:999px;font-size:12px;background:transparent;border:1px solid var(--surface2);color:var(--muted);}
+  .fil-type.active{background:var(--surface2);color:var(--teal);border-color:var(--teal);}
+  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(38px,1fr));gap:8px;}
+  .swatch{position:relative;aspect-ratio:1/1;border-radius:8px;border:2px solid transparent;padding:0;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);}
+  .swatch.active{border-color:var(--teal);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14), 0 0 0 3px rgba(46,196,182,.22);}
+  .swatch .tick{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;}
+  .fil-chosen{display:flex;align-items:center;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--surface2);}
+  .fil-chip{width:44px;height:44px;border-radius:9px;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);}
+  .fil-sheen{background-image:linear-gradient(115deg,rgba(255,255,255,0) 28%,rgba(255,255,255,.55) 44%,rgba(255,255,255,0) 60%);}
+  .fil-gloss{background-image:linear-gradient(115deg,rgba(255,255,255,0) 30%,rgba(255,255,255,.20) 45%,rgba(255,255,255,0) 60%);}
+  .preview-note{position:absolute;left:10px;bottom:10px;background:rgba(0,0,0,.62);color:#F2F1ED;font-family:'JetBrains Mono',monospace;font-size:10px;padding:4px 9px;border-radius:999px;}
+  /* --- beheer: filamenten --- */
+  .fil-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--surface2);}
+  .fil-row:first-of-type{border-top:none;}
+  .fil-dot{width:26px;height:26px;border-radius:7px;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);}
+  .toggle{width:40px;height:23px;border-radius:999px;border:none;background:var(--surface2);position:relative;flex-shrink:0;padding:0;}
+  .toggle.on{background:var(--teal);}
+  .toggle::after{content:"";position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:999px;background:#15171b;transition:left .15s;}
+  .toggle.on::after{left:20px;}
   @media(max-width:640px){.hide-sm{display:none;}}
 </style>
 </head>
@@ -203,6 +225,7 @@ let state = {
   productsError: null,
   productsStalled: false,
   seedError: null,
+  filaments: [],
   orders: [],
   cart: JSON.parse(sessionStorage.getItem('lc_cart') || "[]"),
   user: null,       // firebase auth user
@@ -341,6 +364,37 @@ function listenProducts(){
   });
 }
 
+/* --------------------------- filamenten --------------------------- */
+/* De hele catalogus zit in één document: één lees, één schrijf, en toggles
+   blijven snel. Voor een winkel met één beheerder is dat ruim voldoende. */
+const FILAMENT_DOC = () => doc(db, "settings", "filaments");
+
+function listenFilaments(){
+  onSnapshot(FILAMENT_DOC(), async (snap) => {
+    if (!snap.exists()){
+      try{ await setDoc(FILAMENT_DOC(), { items: buildDefaultFilaments() }); }
+      catch(err){ /* regels of database nog niet klaar; de shop meldt dat al */ }
+      return;
+    }
+    state.filaments = Array.isArray(snap.data().items) ? snap.data().items : [];
+    if (["shop","product","admin","custom"].includes(state.view)) render();
+  }, () => { /* fouten worden al bij de producten gemeld */ });
+}
+async function saveFilaments(items){
+  await setDoc(FILAMENT_DOC(), { items });
+}
+/* Alleen wat de klant mag zien: ingeschakeld, en toegestaan voor dit product. */
+function availableFilaments(product){
+  const on = (state.filaments || []).filter(f => f.enabled);
+  const allowed = product?.filamentTypes;
+  if (Array.isArray(allowed) && allowed.length) return on.filter(f => allowed.includes(f.type));
+  return on;
+}
+function filamentTypes(list){
+  return [...new Set(list.map(f => f.type))];
+}
+function findFilament(id){ return (state.filaments || []).find(f => f.id === id); }
+
 /* Vertaalt een Firestore-fout naar iets waar je wat mee kunt. */
 function firestoreHint(err){
   const code = err?.code || "";
@@ -351,6 +405,82 @@ function firestoreHint(err){
   if (/unauthenticated/.test(code))
     return "Firebase herkent de site niet. Controleer of de configuratie bij het juiste project hoort.";
   return err?.message || String(err);
+}
+
+/* =====================================================================
+   Filamentcatalogus — uitsluitend Bambu Lab.
+   De kleurcodes komen uit de officiële hex-tabellen van Bambu Lab. Ze staan
+   hier alleen als startlijst: de catalogus wordt in Firestore bewaard en is
+   volledig aanpasbaar via Beheer → Filamenten.
+   ===================================================================== */
+const FILAMENT_FINISHES = { basic: "Standaard", matte: "Mat", silk: "Zijdeglans" };
+const DEFAULT_FILAMENTS = [
+  ["PLA Basic", "basic", [
+    ["Jade White","#FFFFFF"], ["Black","#000000"], ["Beige","#F7E6DE"],
+    ["Light Gray","#D1D3D5"], ["Silver","#A6A9AA"], ["Gray","#8E9089"],
+    ["Red","#C12E1F"], ["Magenta","#EC008C"], ["Pink","#F55A74"], ["Hot Pink","#F5547C"],
+    ["Orange","#FF6A13"], ["Yellow","#F4EE2A"], ["Sunflower Yellow","#FEC600"],
+    ["Bambu Green","#00AE42"], ["Mistletoe Green","#3F8E43"],
+    ["Cyan","#0086D6"], ["Blue","#0A2989"], ["Purple","#5E43B7"],
+  ]],
+  ["PLA Matte", "matte", [
+    ["Ivory White","#FFFFFF"], ["Bone White","#CBC6B8"], ["Charcoal","#000000"],
+    ["Nardo Gray","#757575"], ["Ash Gray","#9B9EA0"],
+    ["Lemon Yellow","#F7D959"], ["Mandarin Orange","#F99963"],
+    ["Sakura Pink","#F7ADA6"], ["Lilac Purple","#AE96D4"],
+    ["Ice Blue","#A3D8E1"], ["Sky Blue","#56B7E6"], ["Marine Blue","#0078BF"], ["Dark Blue","#042F56"],
+    ["Grass Green","#61C680"], ["Apple Green","#B4D975"], ["Dark Green","#68724D"],
+    ["Desert Tan","#E8DBB7"], ["Latte Brown","#D3B7A7"], ["Caramel","#AE835B"],
+    ["Terracotta","#B15533"], ["Dark Brown","#7D6556"],
+    ["Dark Red","#BB3D43"], ["Scarlet Red","#DE4343"], ["Plum","#950051"],
+  ]],
+  ["PLA Silk+", "silk", [
+    ["Gold","#F4A925"], ["Silver","#C8C8C8"], ["Blue","#008BDA"],
+    ["Purple","#8671CB"], ["Candy Red","#D02727"], ["Mint","#96DCB9"],
+  ]],
+  ["PETG HF", "basic", [
+    ["Black","#000000"], ["White","#FFFFFF"], ["Gray","#ADB1B2"], ["Dark Gray","#515151"],
+    ["Blue","#002E96"], ["Lake Blue","#1F79E5"],
+    ["Green","#00AE42"], ["Forest Green","#39541A"], ["Lime Green","#6EE53C"],
+    ["Red","#EB3A3A"], ["Orange","#F75403"], ["Yellow","#FFD00B"],
+    ["Cream","#F9DFB9"], ["Peanut Brown","#875718"],
+  ]],
+  ["ABS", "basic", [
+    ["White","#FFFFFF"], ["Black","#000000"], ["Silver","#A6A9AA"],
+    ["Bambu Green","#00AE42"], ["Olive","#789D4A"],
+    ["Blue","#0A2CA5"], ["Navy Blue","#0C2340"], ["Azure","#489FDF"],
+    ["Red","#D32941"], ["Orange","#FF6A13"], ["Tangerine Yellow","#FFC72C"],
+  ]],
+];
+function slug(s){ return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,""); }
+function buildDefaultFilaments(){
+  const out = [];
+  for (const [type, finish, colors] of DEFAULT_FILAMENTS)
+    for (const [name, hex] of colors)
+      out.push({ id: slug(type) + "--" + slug(name), type, finish, name, hex, enabled: true });
+  return out;
+}
+
+/* --------------------------- kleurhulpjes --------------------------- */
+function hexToRgb(hex){
+  const h = String(hex || "").replace("#","").trim();
+  const full = h.length === 3 ? h.split("").map(c=>c+c).join("") : h;
+  const n = parseInt(full.slice(0,6), 16);
+  return Number.isNaN(n) ? { r:128, g:128, b:128 } : { r:(n>>16)&255, g:(n>>8)&255, b:n&255 };
+}
+function rgbToHex({r,g,b}){
+  return "#" + [r,g,b].map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,"0")).join("");
+}
+/* pct > 0 maakt lichter, pct < 0 donkerder */
+function shade(hex, pct){
+  const { r,g,b } = hexToRgb(hex);
+  const t = pct < 0 ? 0 : 255, p = Math.abs(pct);
+  return rgbToHex({ r: r+(t-r)*p, g: g+(t-g)*p, b: b+(t-b)*p });
+}
+/* Bepaalt of tekst op deze kleur zwart of wit moet zijn. */
+function readableOn(hex){
+  const { r,g,b } = hexToRgb(hex);
+  return (0.299*r + 0.587*g + 0.114*b) > 150 ? "#15171b" : "#F2F1ED";
 }
 
 /* Bouwt een productafbeelding als SVG: een gestapeld "geprint" object.
@@ -371,7 +501,49 @@ const PROFILE = {
   vase:  t => 0.34 + 0.30 * Math.sin(Math.PI * t),
   tag:   t => t > 0.80 ? 0.10 : 0.62,
   wedge: t => 0.70 - 0.46 * t,
+  box:   t => 0.55,
+  bowl:  t => 0.26 + 0.40 * Math.sqrt(t),
 };
+const SHAPE_LABELS = { vase:"Vaas", tag:"Plaatje", wedge:"Wig", box:"Blok", bowl:"Kom" };
+
+/* Kleurvoorbeeld: hetzelfde object, geprint in het gekozen filament.
+   De afwerking bepaalt hoe het licht valt — mat vlak, zijdeglans met een
+   duidelijke glans, standaard iets ertussenin. */
+function filamentPreview(shape, hex, finish){
+  const profile = PROFILE[shape] || PROFILE.box;
+  const light = shade(hex, finish === "matte" ? 0.10 : finish === "silk" ? 0.34 : 0.18);
+  const dark  = shade(hex, finish === "matte" ? -0.12 : finish === "silk" ? -0.30 : -0.18);
+  const rows = 26, top = 72, bottom = 332, h = (bottom - top) / rows;
+  let bars = "";
+  for (let i = 0; i < rows; i++){
+    const t = i / (rows - 1);
+    const w = Math.max(7, profile(t) * 150);
+    const y = bottom - (i + 1) * h;
+    bars += `<rect x="${(200-w).toFixed(1)}" y="${y.toFixed(1)}" width="${(w*2).toFixed(1)}" height="${(h-2.2).toFixed(1)}" rx="3" fill="${i%2 ? dark : light}"/>`;
+  }
+  // Zijdeglans krijgt een verticale glansband, mat krijgt niets.
+  const sheen = finish === "silk"
+    ? `<defs><linearGradient id="s" x1="0" y1="0" x2="1" y2="0">
+         <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+         <stop offset="0.34" stop-color="#fff" stop-opacity="0.42"/>
+         <stop offset="0.52" stop-color="#fff" stop-opacity="0.06"/>
+         <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+       </linearGradient></defs>
+       <rect x="60" y="60" width="280" height="285" fill="url(#s)" style="mix-blend-mode:soft-light"/>`
+    : finish === "basic"
+    ? `<defs><linearGradient id="s" x1="0" y1="0" x2="1" y2="0">
+         <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+         <stop offset="0.3" stop-color="#fff" stop-opacity="0.14"/>
+         <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+       </linearGradient></defs>
+       <rect x="60" y="60" width="280" height="285" fill="url(#s)" style="mix-blend-mode:soft-light"/>`
+    : ``;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">`
+    + `<rect width="400" height="400" fill="#22262c"/>`
+    + `<ellipse cx="200" cy="338" rx="105" ry="12" fill="#000" opacity="0.28"/>`
+    + bars + sheen + `</svg>`;
+  return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
+}
 
 async function seedIfEmpty(){
   try{
@@ -390,21 +562,21 @@ async function writeSeed(){
       name:"Plantenvaas — Spiraal", price:18.0, stock:15, category:"Wonen",
       description:"Waterdichte vaas geprint in vase mode: één doorlopende wand van onder tot boven, zonder naden. De spiraal vangt het licht anders vanuit elke hoek. Geschikt voor droogbloemen of, met een glazen buisje erin, voor water.",
       material:"PETG", infill:"vase mode", layerHeight:"0.16mm", color:"Petrol",
-      dimensions:"Ø 90 × 180 mm", printTime:"5u 40m", weight:145, featured:true, icon:"🏺",
+      dimensions:"Ø 90 × 180 mm", printTime:"5u 40m", weight:145, featured:true, icon:"🏺", shape:"vase",
       images:[ printSvg(PROFILE.vase,"#2EC4B6","#25a99d","#22262c"), printSvg(PROFILE.vase,"#3ad4c5","#2EC4B6","#1a1d22") ],
     },
     {
       name:"Sleutelhanger — Hex Tag", price:6.5, stock:40, category:"Accessoires",
       description:"Compacte tag met zeshoekig patroon en versterkt ophangoog. Print snel, gaat lang mee, en kan op aanvraag met je eigen initialen in reliëf.",
       material:"PLA", infill:"20%", layerHeight:"0.2mm", color:"Oranje",
-      dimensions:"45 × 28 × 4 mm", printTime:"38m", weight:6, featured:false, icon:"🔑",
+      dimensions:"45 × 28 × 4 mm", printTime:"38m", weight:6, featured:false, icon:"🔑", shape:"tag",
       images:[ printSvg(PROFILE.tag,"#FF6B35","#e05528","#22262c"), printSvg(PROFILE.tag,"#ff8659","#FF6B35","#1a1d22") ],
     },
     {
       name:"Telefoonstandaard — Wedge", price:9.9, stock:25, category:"Bureau",
       description:"Stevige wig met een uitsparing voor de laadkabel, zodat je toestel opgeladen blijft staan. Past op vrijwel elke telefoon, met of zonder hoesje.",
       material:"PLA+", infill:"35%", layerHeight:"0.2mm", color:"Grijs",
-      dimensions:"80 × 70 × 62 mm", printTime:"2u 15m", weight:48, featured:false, icon:"📱",
+      dimensions:"80 × 70 × 62 mm", printTime:"2u 15m", weight:48, featured:false, icon:"📱", shape:"wedge",
       images:[ printSvg(PROFILE.wedge,"#c9cdd4","#a8adb6","#22262c"), printSvg(PROFILE.wedge,"#dfe3e9","#c9cdd4","#1a1d22") ],
     },
   ];
@@ -435,7 +607,9 @@ async function placeOrder(shippingCountry, address, payment){
   const order = {
     uid: state.user.uid,
     userEmail: state.user.email,
-    items: state.cart.map(({id,kind,name,price,qty})=>({id,kind,name,price,qty})),
+    items: state.cart.map(({id,productId,kind,name,price,qty,filament})=>({
+      id, productId: productId || id, kind, name, price, qty, filament: filament || null,
+    })),
     shippingCountry, shippingAddress: address,
     shippingCost: rate.price,
     subtotal: cartTotal(),
@@ -666,24 +840,77 @@ function attachShopHandlers(){
   });
 }
 
+/* Welke afwerking krijgt welk glanslaagje op een staal. */
+function finishClass(finish){ return finish === "silk" ? "fil-sheen" : finish === "basic" ? "fil-gloss" : ""; }
+
+/* De filamentkeuze voor het geopende product, met terugval op de eerste
+   beschikbare kleur zodat er nooit "niets" gekozen staat. */
+function currentFilament(p){
+  const list = availableFilaments(p);
+  if (!list.length) return null;
+  return list.find(f => f.id === state.__filament) || list[0];
+}
+function filamentPicker(p){
+  const list = availableFilaments(p);
+  if (!list.length){
+    return `<div class="fil-block"><p class="muted" style="font-size:13px;margin:0;">Er zijn nog geen filamenten ingeschakeld.</p></div>`;
+  }
+  const types = filamentTypes(list);
+  const chosen = currentFilament(p);
+  const activeType = types.includes(state.__filType) ? state.__filType : chosen.type;
+  const colors = list.filter(f => f.type === activeType);
+  return `
+    <div class="fil-block">
+      <div class="between" style="margin-bottom:10px;">
+        <span class="font-display" style="font-size:14px;">Filament</span>
+        <span class="muted font-mono" style="font-size:10px;">BAMBU LAB</span>
+      </div>
+      <div class="fil-types">
+        ${types.map(t=>`<button class="fil-type ${t===activeType?'active':''}" data-filtype="${esc(t)}">${esc(t)}</button>`).join("")}
+      </div>
+      <div class="swatches">
+        ${colors.map(f=>`
+          <button class="swatch ${finishClass(f.finish)} ${f.id===chosen.id?'active':''}"
+                  data-fil="${esc(f.id)}" title="${esc(f.name)} — ${esc(f.hex)}"
+                  style="background-color:${esc(f.hex)};">
+            ${f.id===chosen.id ? `<span class="tick" style="color:${esc(readableOn(f.hex))}">✓</span>` : ``}
+          </button>`).join("")}
+      </div>
+      <div class="fil-chosen">
+        <div class="fil-chip ${finishClass(chosen.finish)}" style="background-color:${esc(chosen.hex)};"></div>
+        <div style="min-width:0;">
+          <div style="font-size:14px;">${esc(chosen.name)}</div>
+          <div class="muted font-mono" style="font-size:11px;">
+            ${esc(chosen.type)} · ${esc(FILAMENT_FINISHES[chosen.finish] || chosen.finish)} · ${esc(chosen.hex.toUpperCase())}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
 function viewProduct(){
   const p = state.selectedProduct;
   if (!p) return `<p class="muted">Product niet gevonden.</p>`;
   const imgs = productImages(p);
-  const active = Math.min(state.__gallery || 0, Math.max(0, imgs.length - 1));
-  const main = imgs.length
-    ? `<img id="galleryMain" src="${esc(imgs[active])}" alt="${esc(p.name)}" />`
+  const chosen = currentFilament(p);
+  // index 0 is het kleurvoorbeeld, daarna komen de foto's van het product
+  const preview = chosen ? filamentPreview(p.shape || "box", chosen.hex, chosen.finish) : null;
+  const all = preview ? [preview, ...imgs] : imgs;
+  const active = Math.min(state.__gallery || 0, Math.max(0, all.length - 1));
+  const showingPreview = preview && active === 0;
+  const main = all.length
+    ? `<img id="galleryMain" src="${esc(all[active])}" alt="${esc(p.name)}" />`
     : `<span>${esc(p.icon || "📦")}</span>`;
-  const strip = imgs.length > 1 ? `
+  const strip = all.length > 1 ? `
     <div class="gallery-strip">
-      ${imgs.map((src,i)=>`<button class="${i===active?'active':''}" data-img="${i}"><img src="${esc(src)}" alt="Afbeelding ${i+1}" /></button>`).join("")}
+      ${all.map((src,i)=>`<button class="${i===active?'active':''}" data-img="${i}"><img src="${esc(src)}" alt="${i===0&&preview?'Kleurvoorbeeld':'Afbeelding '+i}" /></button>`).join("")}
     </div>` : ``;
 
   const specs = [
-    ["Materiaal", p.material],
+    ["Materiaal", chosen ? chosen.type : p.material],
     ["Infill", p.infill],
     ["Laaghoogte", p.layerHeight],
-    ["Kleur", p.color],
+    ["Kleur", chosen ? chosen.name : p.color],
     ["Afmetingen", p.dimensions],
     ["Printtijd", p.printTime],
     ["Gewicht", p.weight ? p.weight + " g" : ""],
@@ -696,7 +923,10 @@ function viewProduct(){
       <button class="back" onclick="go('shop')">← Terug naar collectie</button>
       <div class="product-layout">
         <div>
-          <div class="gallery-main">${main}</div>
+          <div class="gallery-main rel">
+            ${main}
+            ${showingPreview ? `<span class="preview-note">KLEURVOORBEELD · ${esc(chosen.name.toUpperCase())}</span>` : ``}
+          </div>
           ${strip}
         </div>
         <div>
@@ -708,6 +938,7 @@ function viewProduct(){
             ${inStock ? esc(p.stock) + " op voorraad" : "Niet op voorraad"}
           </p>
           ${p.description ? `<p style="font-size:14px;line-height:1.6;color:var(--text);opacity:.85;">${esc(p.description)}</p>` : ``}
+          ${filamentPicker(p)}
           ${specs ? `<div class="spec-grid">${specs}</div>` : ``}
           <div class="row" style="margin-top:18px;">
             <div class="stepper"><button id="qMinus">−</button><span id="qVal">1</span><button id="qPlus">+</button></div>
@@ -726,10 +957,33 @@ function attachProductHandlers(){
   document.querySelectorAll('[data-img]').forEach(btn=>{
     btn.onclick = () => { state.__gallery = parseInt(btn.dataset.img,10) || 0; render(); };
   });
+  document.querySelectorAll('[data-filtype]').forEach(btn=>{
+    btn.onclick = () => {
+      state.__filType = btn.dataset.filtype;
+      // eerste kleur van het nieuwe type kiezen, anders blijft de oude staan
+      const first = availableFilaments(state.selectedProduct).find(f => f.type === state.__filType);
+      if (first) state.__filament = first.id;
+      state.__gallery = 0;
+      render();
+    };
+  });
+  document.querySelectorAll('[data-fil]').forEach(btn=>{
+    btn.onclick = () => {
+      state.__filament = btn.dataset.fil;
+      state.__gallery = 0; // toon meteen het kleurvoorbeeld
+      render();
+    };
+  });
   const add = document.getElementById('addBtn');
   if (add) add.onclick = ()=>{
     const p = state.selectedProduct;
-    addToCart({ id:p.id, kind:"product", name:p.name, price:p.price, qty });
+    const f = currentFilament(p);
+    addToCart({
+      id: f ? `${p.id}::${f.id}` : p.id,   // andere kleur = aparte regel in de winkelwagen
+      productId: p.id,
+      kind: "product", name: p.name, price: p.price, qty,
+      filament: f ? { id:f.id, type:f.type, name:f.name, hex:f.hex, finish:f.finish } : null,
+    });
   };
 }
 
@@ -741,7 +995,7 @@ function viewCustom(){
       <p class="muted" style="font-size:13px;margin-bottom:20px;">We printen je bestand en sturen het naar je adres. De prijs is een automatische schatting — de shop kan dit na controle aanpassen.</p>
       <label class="upload-box" for="fileInput">
         <span style="font-size:26px;">⬆</span>
-        <span id="fileLabel" style="font-size:14px;">Klik om een .stl, .obj of .3mf bestand te kiezen</span>
+        <span id="fileLabel" style="font-size:14px;">${__customFile ? esc(__customFile.name) : "Klik om een .stl, .obj of .3mf bestand te kiezen"}</span>
         <span class="muted font-mono" style="font-size:11px;">max 8MB</span>
         <!-- Bewust ruim: iOS kent geen bestandstype voor .stl/.obj/.3mf en grijst
              die bestanden uit zodra de lijst te streng is. De controle op de
@@ -753,20 +1007,34 @@ function viewCustom(){
       <p class="muted" style="font-size:11px;margin-top:-4px;">
         Op iPhone: kies <em>Bladeren</em> en zoek je bestand in Bestanden of iCloud Drive.
       </p>
-      <div id="customForm" class="hidden">
-        <label class="field-label">Materiaal</label>
-        <select class="field" id="customMaterial">
-          <option>PLA</option><option>PLA+</option><option>PETG</option><option>ABS</option><option>TPU</option>
-        </select>
+      <div id="customForm" class="${__customFile ? '' : 'hidden'}">
+        ${filamentPicker(null)}
         <label class="field-label">Geschatte prijs</label>
-        <p class="price" id="estPrice" style="font-size:18px;"></p>
-        <textarea id="customNotes" rows="3" placeholder="Opmerkingen (kleur, afwerking, schaal...)"></textarea>
+        <p class="price" id="estPrice" style="font-size:18px;">${__customFile ? fmtEUR(customEstimate(__customFile)) : ""}</p>
+        <textarea id="customNotes" rows="3" placeholder="Opmerkingen (afwerking, schaal, bijzonderheden...)">${esc(state.__customNotes || "")}</textarea>
         <button class="btn btn-orange" id="customAddBtn">🛒 Toevoegen aan winkelwagen</button>
       </div>
     </div>`;
 }
+function customEstimate(f){ return Math.max(9.95, 9.95 + (f.size/1024)*0.03); }
 let __customFile = null;
 function attachCustomHandlers(){
+  // de filamentkiezer werkt hier hetzelfde als op een productpagina
+  document.querySelectorAll('[data-filtype]').forEach(btn=>{
+    btn.onclick = () => {
+      state.__filType = btn.dataset.filtype;
+      const first = availableFilaments(null).find(f => f.type === state.__filType);
+      if (first) state.__filament = first.id;
+      render();
+    };
+  });
+  document.querySelectorAll('[data-fil]').forEach(btn=>{
+    btn.onclick = () => { state.__filament = btn.dataset.fil; render(); };
+  });
+
+  const notes = document.getElementById('customNotes');
+  if (notes) notes.oninput = () => { state.__customNotes = notes.value; };
+
   const input = document.getElementById('fileInput');
   input.onchange = (e) => {
     const f = e.target.files[0];
@@ -774,44 +1042,54 @@ function attachCustomHandlers(){
     if (!/\.(stl|obj|3mf)$/i.test(f.name)){ notify(`"${f.name}" is geen .stl, .obj of .3mf bestand`); return; }
     if (f.size > MAX_UPLOAD_BYTES){ notify(`Bestand te groot (${(f.size/1024/1024).toFixed(1)}MB, max 8MB)`); return; }
     __customFile = f;
-    document.getElementById('fileLabel').textContent = f.name;
-    document.getElementById('customForm').classList.remove('hidden');
-    const est = Math.max(9.95, 9.95 + (f.size/1024)*0.03);
-    document.getElementById('estPrice').textContent = fmtEUR(est);
-    document.getElementById('customAddBtn').onclick = async () => {
-      if (!state.user){ notify("Log in om een eigen model te uploaden"); go("login"); return; }
-      const btn = document.getElementById('customAddBtn');
-      btn.disabled = true; btn.textContent = "Uploaden...";
-      try{
-        const path = `uploads/${state.user.uid}/${Date.now()}_${f.name}`;
-        const sref = ref(storage, path);
-        await uploadBytes(sref, f);
-        const url = await getDownloadURL(sref);
-        const material = document.getElementById('customMaterial').value;
-        const notes = document.getElementById('customNotes').value;
-        const uploadDoc = await addDoc(collection(db,"uploads"), {
-          uid: state.user.uid, fileName: f.name, fileSize: f.size,
-          material, notes, storageUrl: url, createdAt: Date.now(),
-        });
-        addToCart({
-          id: uploadDoc.id, kind:"custom",
-          name: "Eigen model — " + f.name,
-          price: Math.round(est*100)/100, qty: 1,
-        });
-        go("cart");
-      }catch(err){
-        const code = err?.code || "";
-        let msg = err.message || String(err);
-        if (/storage\/unauthorized|storage\/unauthenticated/.test(code)) {
-          msg = "Geen toegang tot de opslag — controleer de Storage-regels in Firebase.";
-        } else if (/storage\/unknown|storage\/retry-limit|storage\/bucket-not-found|storage\/project-not-found/.test(code)) {
-          msg = "De bestandsopslag is nog niet ingesteld in Firebase (Build → Storage).";
-        }
-        notify("Upload mislukt: " + msg);
-        btn.disabled = false; btn.textContent = "🛒 Toevoegen aan winkelwagen";
-      }
-    };
+    render(); // toont het vervolgformulier met de bewaarde keuzes
   };
+
+  const addBtn = document.getElementById('customAddBtn');
+  if (addBtn && __customFile) addBtn.onclick = async () => {
+    const f = __customFile;
+    if (!state.user){ notify("Log in om een eigen model te uploaden"); go("login"); return; }
+    addBtn.disabled = true; addBtn.textContent = "Uploaden...";
+    try{
+      const path = `uploads/${state.user.uid}/${Date.now()}_${f.name}`;
+      const sref = ref(storage, path);
+      await uploadBytes(sref, f);
+      const url = await getDownloadURL(sref);
+      const fil = currentFilament(null);
+      const est = customEstimate(f);
+      const uploadDoc = await addDoc(collection(db,"uploads"), {
+        uid: state.user.uid, fileName: f.name, fileSize: f.size,
+        material: fil ? fil.type : "", filament: fil ? { id:fil.id, type:fil.type, name:fil.name, hex:fil.hex, finish:fil.finish } : null,
+        notes: state.__customNotes || "", storageUrl: url, createdAt: Date.now(),
+      });
+      addToCart({
+        id: uploadDoc.id, kind:"custom",
+        name: "Eigen model — " + f.name,
+        price: Math.round(est*100)/100, qty: 1,
+        filament: fil ? { id:fil.id, type:fil.type, name:fil.name, hex:fil.hex, finish:fil.finish } : null,
+      });
+      __customFile = null;
+      state.__customNotes = "";
+      go("cart");
+    }catch(err){
+      const code = err?.code || "";
+      let msg = err.message || String(err);
+      if (/storage\/unauthorized|storage\/unauthenticated/.test(code)) {
+        msg = "Geen toegang tot de opslag — controleer de Storage-regels in Firebase.";
+      } else if (/storage\/unknown|storage\/retry-limit|storage\/bucket-not-found|storage\/project-not-found/.test(code)) {
+        msg = "De bestandsopslag is nog niet ingesteld in Firebase (Build → Storage).";
+      }
+      notify("Upload mislukt: " + msg);
+      addBtn.disabled = false; addBtn.textContent = "🛒 Toevoegen aan winkelwagen";
+    }
+  };
+}
+
+/* De vorm van het bijbehorende product, zodat het kleurvoorbeeld in de
+   winkelwagen hetzelfde object toont als op de productpagina. */
+function cartShape(it){
+  const p = state.products.find(x => x.id === (it.productId || it.id));
+  return p?.shape || "box";
 }
 
 function viewCart(){
@@ -824,10 +1102,17 @@ function viewCart(){
         <div class="admin-thumb">${
           it.kind==='custom'
             ? '📄'
-            : productThumb(state.products.find(x=>x.id===it.id) || {}, 18)
+            : it.filament
+              ? `<img src="${esc(filamentPreview(cartShape(it), it.filament.hex, it.filament.finish))}" alt="" />`
+              : productThumb(state.products.find(x=>x.id===(it.productId||it.id)) || {}, 18)
         }</div>
-        <div>
+        <div style="min-width:0;">
           <div style="font-size:13px;">${esc(it.name)}</div>
+          ${it.filament ? `
+            <div class="row" style="gap:6px;margin-top:2px;">
+              <span class="fil-chip ${finishClass(it.filament.finish)}" style="width:13px;height:13px;border-radius:4px;background-color:${esc(it.filament.hex)};"></span>
+              <span class="muted font-mono" style="font-size:10px;">${esc(it.filament.type)} · ${esc(it.filament.name)}</span>
+            </div>` : ``}
           <div class="muted font-mono" style="font-size:11px;">${fmtEUR(it.price)} / stuk</div>
         </div>
       </div>
@@ -1035,9 +1320,17 @@ function orderCard(o){
   const open = state.__openOrder === o.id;
   const lines = o.items.map(i=>`
     <div class="order-line">
-      <div class="admin-thumb">${ i.kind === 'custom' ? '📄' : productThumb(state.products.find(p=>p.id===i.id) || {}, 18) }</div>
+      <div class="admin-thumb">${
+        i.kind === 'custom' ? '📄'
+        : i.filament ? `<img src="${esc(filamentPreview(cartShape(i), i.filament.hex, i.filament.finish))}" alt="" />`
+        : productThumb(state.products.find(p=>p.id===(i.productId||i.id)) || {}, 18) }</div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:13px;">${esc(i.name)}</div>
+        ${i.filament ? `
+          <div class="row" style="gap:6px;margin-top:2px;">
+            <span class="fil-chip ${finishClass(i.filament.finish)}" style="width:12px;height:12px;border-radius:4px;background-color:${esc(i.filament.hex)};"></span>
+            <span class="muted font-mono" style="font-size:10px;">${esc(i.filament.type)} · ${esc(i.filament.name)}</span>
+          </div>` : ``}
         <div class="muted font-mono" style="font-size:11px;">${i.qty} × ${fmtEUR(i.price)}</div>
       </div>
       <span class="font-mono" style="font-size:12px;">${fmtEUR(i.price * i.qty)}</span>
@@ -1125,7 +1418,11 @@ function viewAdmin(){
           ${["In verwerking","Wordt geprint","Verzonden","Geleverd"].map(s=>`<option ${s===o.status?'selected':''}>${s}</option>`).join("")}
         </select>
       </div>
-      <div style="font-size:13px;margin-bottom:4px;">${o.items.map(i=>`${i.qty}× ${esc(i.name)}`).join(", ")}</div>
+      ${o.items.map(i=>`
+        <div class="row" style="gap:7px;font-size:13px;margin-bottom:3px;">
+          ${i.filament ? `<span class="fil-chip ${finishClass(i.filament.finish)}" style="width:13px;height:13px;border-radius:4px;background-color:${esc(i.filament.hex)};flex-shrink:0;"></span>` : ``}
+          <span style="min-width:0;">${i.qty}× ${esc(i.name)}${i.filament ? ` <span class="muted font-mono" style="font-size:10px;">${esc(i.filament.type)} · ${esc(i.filament.name)}</span>` : ``}</span>
+        </div>`).join("")}
       <div class="between font-mono" style="font-size:11px;">
         <span class="muted">${esc(o.shippingAddress?.street||'')}, ${esc(o.shippingAddress?.zip||'')} ${esc(o.shippingAddress?.city||'')}, ${esc(o.shippingCountry||'')}</span>
         <span style="color:var(--teal);">${fmtEUR(o.total)}</span>
@@ -1139,7 +1436,9 @@ function viewAdmin(){
       <div class="tabs">
         <button class="tab ${tab==='products'?'active':''}" onclick="window.__setAdminTab('products')">Producten</button>
         <button class="tab ${tab==='orders'?'active':''}" onclick="window.__setAdminTab('orders')">Bestellingen (${state.orders.length})</button>
+        <button class="tab ${tab==='filaments'?'active':''}" onclick="window.__setAdminTab('filaments')">Filamenten</button>
       </div>
+      <div id="adminFilaments" class="${tab==='filaments'?'':'hidden'}">${viewFilamentAdmin()}</div>
       <div id="adminProducts" class="${tab==='products'?'':'hidden'}">
         <div style="display:grid;grid-template-columns:1fr;gap:24px;">
           <div>
@@ -1207,6 +1506,21 @@ function viewAdmin(){
               </div>
             </div>
 
+            <label class="field-label">Vorm voor het kleurvoorbeeld</label>
+            <select class="field" id="pShape">
+              ${Object.entries(SHAPE_LABELS).map(([k,v])=>`<option value="${k}" ${k===(ed?.shape||'box')?'selected':''}>${v}</option>`).join("")}
+            </select>
+
+            <label class="field-label">Beschikbare filamenttypes</label>
+            <p class="muted" style="font-size:11px;margin:-2px 0 8px;">Niets aanvinken = alle ingeschakelde filamenten.</p>
+            <div style="margin-bottom:12px;">
+              ${filamentTypes(state.filaments || []).map(t=>`
+                <label class="checkbox-row">
+                  <input type="checkbox" class="ptype" value="${esc(t)}" style="width:auto;margin:0;"
+                         ${(ed?.filamentTypes || []).includes(t) ? 'checked' : ''} /> ${esc(t)}
+                </label>`).join("") || `<p class="muted" style="font-size:12px;">Nog geen filamenten geladen.</p>`}
+            </div>
+
             <label class="checkbox-row"><input type="checkbox" id="pFeatured" style="width:auto;margin:0;" ${ed?.featured ? 'checked' : ''} /> Uitlichten in de collectie</label>
 
             <button class="btn btn-orange" id="addProductBtn" style="width:100%;">${ed ? "Wijzigingen opslaan" : "Product toevoegen"}</button>
@@ -1222,6 +1536,118 @@ function viewAdmin(){
       </div>
     </div>`;
 }
+/* --------------------------- beheer: filamenten --------------------------- */
+function viewFilamentAdmin(){
+  const items = state.filaments || [];
+  if (!items.length){
+    return `
+      <p class="muted" style="font-size:13px;margin-bottom:12px;">De filamentcatalogus is nog niet geladen.</p>
+      <button class="btn btn-orange" id="resetFilamentsBtn">Bambu Lab-catalogus laden</button>`;
+  }
+  const types = filamentTypes(items);
+  const blocks = types.map(type => {
+    const rows = items.filter(f => f.type === type);
+    const aan = rows.filter(f => f.enabled).length;
+    return `
+      <div class="cart-item" style="margin-bottom:12px;">
+        <div class="between" style="margin-bottom:8px;">
+          <div>
+            <div class="font-display" style="font-size:14px;">${esc(type)}</div>
+            <div class="muted font-mono" style="font-size:10px;">${aan} van ${rows.length} aan · ${esc(FILAMENT_FINISHES[rows[0].finish] || rows[0].finish)}</div>
+          </div>
+          <button class="navbtn" data-filtypetoggle="${esc(type)}" data-target="${aan === rows.length ? 'off' : 'on'}">
+            ${aan === rows.length ? "Alles uit" : "Alles aan"}
+          </button>
+        </div>
+        ${rows.map(f=>`
+          <div class="fil-row">
+            <span class="fil-dot ${finishClass(f.finish)}" style="background-color:${esc(f.hex)};"></span>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;${f.enabled?'':'opacity:.45;'}">${esc(f.name)}</div>
+              <div class="muted font-mono" style="font-size:10px;">${esc(f.hex.toUpperCase())}</div>
+            </div>
+            <button class="toggle ${f.enabled?'on':''}" data-filtoggle="${esc(f.id)}" title="${f.enabled?'Uitzetten':'Aanzetten'}"></button>
+            ${f.custom ? `<button class="navbtn" data-fildelete="${esc(f.id)}" title="Verwijderen">🗑</button>` : ``}
+          </div>`).join("")}
+      </div>`;
+  }).join("");
+
+  return `
+    <p class="muted" style="font-size:13px;margin-bottom:16px;">
+      Uitsluitend Bambu Lab. Zet aan wat je op voorraad hebt — klanten zien alleen die kleuren.
+      Kleurcodes komen uit de officiële hex-tabellen; je kunt ze hier aanpassen als een kleur eruitziet als iets anders.
+    </p>
+    ${blocks}
+    <div class="cart-item" style="margin-top:16px;">
+      <h3 class="font-display" style="font-size:14px;margin:0 0 10px;">+ Eigen filament</h3>
+      <div class="form-grid">
+        <div><label class="field-label">Type</label><input id="nfType" placeholder="PLA Basic" /></div>
+        <div><label class="field-label">Kleurnaam</label><input id="nfName" placeholder="Bambu Green" /></div>
+        <div><label class="field-label">Kleurcode</label><input id="nfHex" placeholder="#00AE42" /></div>
+        <div><label class="field-label">Afwerking</label>
+          <select class="field" id="nfFinish">
+            ${Object.entries(FILAMENT_FINISHES).map(([k,v])=>`<option value="${k}">${v}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-orange" id="addFilamentBtn" style="width:100%;">Filament toevoegen</button>
+    </div>`;
+}
+
+function attachFilamentHandlers(){
+  const reset = document.getElementById('resetFilamentsBtn');
+  if (reset) reset.onclick = async () => {
+    reset.disabled = true;
+    try{ await saveFilaments(buildDefaultFilaments()); notify("Catalogus geladen"); }
+    catch(err){ notify("Mislukt: " + err.message); reset.disabled = false; }
+  };
+
+  document.querySelectorAll('[data-filtoggle]').forEach(btn=>{
+    btn.onclick = async () => {
+      const items = (state.filaments || []).map(f =>
+        f.id === btn.dataset.filtoggle ? { ...f, enabled: !f.enabled } : f);
+      state.filaments = items;                       // meteen zichtbaar
+      btn.classList.toggle('on');
+      try{ await saveFilaments(items); }catch(err){ notify("Opslaan mislukt: " + err.message); }
+    };
+  });
+
+  document.querySelectorAll('[data-filtypetoggle]').forEach(btn=>{
+    btn.onclick = async () => {
+      const on = btn.dataset.target === 'on';
+      const items = (state.filaments || []).map(f =>
+        f.type === btn.dataset.filtypetoggle ? { ...f, enabled: on } : f);
+      try{ await saveFilaments(items); }catch(err){ notify("Opslaan mislukt: " + err.message); }
+    };
+  });
+
+  document.querySelectorAll('[data-fildelete]').forEach(btn=>{
+    btn.onclick = async () => {
+      const items = (state.filaments || []).filter(f => f.id !== btn.dataset.fildelete);
+      try{ await saveFilaments(items); notify("Filament verwijderd"); }
+      catch(err){ notify("Verwijderen mislukt: " + err.message); }
+    };
+  });
+
+  const add = document.getElementById('addFilamentBtn');
+  if (add) add.onclick = async () => {
+    const v = id => (document.getElementById(id)?.value || "").trim();
+    const type = v('nfType'), name = v('nfName');
+    let hex = v('nfHex');
+    if (!type || !name){ notify("Vul type en kleurnaam in"); return; }
+    if (!hex.startsWith("#")) hex = "#" + hex;
+    if (!/^#[0-9a-f]{6}$/i.test(hex)){ notify("Gebruik een kleurcode als #00AE42"); return; }
+    const id = slug(type) + "--" + slug(name);
+    if ((state.filaments || []).some(f => f.id === id)){ notify("Dat filament staat er al in"); return; }
+    const items = [...(state.filaments || []), {
+      id, type, name, hex: hex.toUpperCase(), finish: v('nfFinish') || "basic",
+      enabled: true, custom: true,
+    }];
+    try{ await saveFilaments(items); notify("Filament toegevoegd"); }
+    catch(err){ notify("Opslaan mislukt: " + err.message); }
+  };
+}
+
 const MAX_PRODUCT_IMAGES = 4;
 window.__deleteProduct = deleteProduct;
 window.__setStatus = setOrderStatus;
@@ -1253,6 +1679,7 @@ function renderImageTray(){
 }
 
 function attachAdminHandlers(){
+  attachFilamentHandlers();
   if (!Array.isArray(state.__draftImages)) state.__draftImages = [];
   renderImageTray();
 
@@ -1302,6 +1729,8 @@ function attachAdminHandlers(){
       dimensions: val('pDim'),
       printTime: val('pTime'),
       weight: isFinite(weight) ? weight : 0,
+      shape: val('pShape') || "box",
+      filamentTypes: [...document.querySelectorAll('.ptype:checked')].map(c => c.value),
       featured: !!document.getElementById('pFeatured')?.checked,
       images: (state.__draftImages || []).filter(isSafeImageSrc).slice(0, MAX_PRODUCT_IMAGES),
       icon: "📦",
@@ -1331,6 +1760,7 @@ function attachAdminHandlers(){
 /* --------------------------- boot --------------------------- */
 seedIfEmpty();
 listenProducts();
+listenFilaments();
 renderAuthNav();
 render();
 </script>
