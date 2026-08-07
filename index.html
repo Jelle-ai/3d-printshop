@@ -157,6 +157,7 @@ const db = getFirestore(app);
 const storage = getStorage(app);
 
 /* --------------------------- constants --------------------------- */
+const FIRESTORE_CONSOLE_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore`;
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8MB (Firebase Storage, not Firestore, so bigger is fine)
 const SHIPPING_RATES = [
   { country: "België", price: 4.95 },
@@ -182,6 +183,7 @@ let state = {
   products: [],
   productsLoaded: false,
   productsError: null,
+  productsStalled: false,
   seedError: null,
   orders: [],
   cart: JSON.parse(sessionStorage.getItem('lc_cart') || "[]"),
@@ -247,14 +249,28 @@ async function doLogout(){
 /* --------------------------- products (realtime) --------------------------- */
 function listenProducts(){
   const q = query(collection(db, "products"), orderBy("name"));
+  // Bestaat de database niet, dan roept Firestore géén foutcallback aan maar
+  // blijft het stil opnieuw proberen. Zonder deze timer blijft de shop dan
+  // eindeloos op "laden" staan zonder uitleg.
+  clearTimeout(state.__productsTimer);
+  state.__productsTimer = setTimeout(() => {
+    if (!state.productsLoaded){
+      state.productsStalled = true;
+      if (state.view === "shop") render();
+    }
+  }, 8000);
   onSnapshot(q, (snap) => {
+    clearTimeout(state.__productsTimer);
     state.products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     state.productsLoaded = true;
     state.productsError = null;
+    state.productsStalled = false;
     if (state.view === "shop" || state.view === "product" || state.view === "admin") render();
   }, (err) => {
+    clearTimeout(state.__productsTimer);
     state.productsLoaded = true;
     state.productsError = err;
+    state.productsStalled = false;
     render();
   });
 }
@@ -522,6 +538,23 @@ function viewShop(){
 }
 /* Een lege collectie heeft altijd een oorzaak — die tonen we in plaats van niets. */
 function emptyCollectionNotice(){
+  if (!state.productsLoaded && state.productsStalled){
+    return `
+      <div class="cart-item" style="border-color:var(--orange);">
+        <p style="font-size:13px;margin:0 0 8px;color:var(--orange);font-weight:600;">Firestore antwoordt niet</p>
+        <p class="muted" style="font-size:13px;margin:0 0 8px;">
+          De database is waarschijnlijk nog niet aangemaakt. Firestore meldt dat niet als fout,
+          maar blijft het stilletjes opnieuw proberen — daarom bleef dit vak leeg.
+        </p>
+        <p class="muted" style="font-size:13px;margin:0 0 12px;">
+          Ga in de Firebase Console naar <strong>Build → Firestore Database</strong>, klik op
+          <strong>Create database</strong>, kies locatie <strong>europe-west1</strong> en
+          <strong>Start in test mode</strong>. Herlaad daarna deze pagina.
+        </p>
+        <a class="btn btn-orange" style="display:inline-block;text-decoration:none;"
+           href="${esc(FIRESTORE_CONSOLE_URL)}" target="_blank" rel="noopener">Firestore openen</a>
+      </div>`;
+  }
   if (!state.productsLoaded && !state.productsError){
     return `<p class="muted" style="font-size:13px;">Collectie laden…</p>`;
   }
