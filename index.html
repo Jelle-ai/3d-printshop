@@ -451,35 +451,35 @@ import {
    die elk onder de documentgrens van 1 MB blijven.
    ===================================================================== */
 const CHUNK_BYTES = 700000;          // ruim onder de grens van 1 MiB
-const MAX_FIRESTORE_BYTES = 24 * 1024 * 1024;   // na comprimeren
+const MAX_FIRESTORE_BYTES = 24 * 1024 * 1024;
 
-async function gzip(blob){
-  if (typeof CompressionStream === "undefined") return new Uint8Array(await blob.arrayBuffer());
-  const s = blob.stream().pipeThrough(new CompressionStream('gzip'));
-  return new Uint8Array(await new Response(s).arrayBuffer());
-}
-async function gunzip(bytes){
-  if (typeof DecompressionStream === "undefined") return bytes;
-  const s = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-  return new Uint8Array(await new Response(s).arrayBuffer());
+/* Vingerafdruk van het bestand. Bij het ophalen rekenen we hem opnieuw uit;
+   komt hij niet overeen, dan is er onderweg iets misgegaan en zeggen we dat
+   in plaats van stilzwijgend een kapot bestand af te leveren. */
+async function fileHash(bytes){
+  if (!crypto?.subtle) return null;
+  const d = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-/* Schrijft één bestand als een reeks documenten onder de opdracht. */
+/* Schrijft één bestand als een reeks documenten onder de opdracht.
+   Bewust ongewijzigd: de bytes gaan er precies zo in als ze binnenkwamen. */
 async function storeFileInFirestore(jobId, index, file, onProgress){
-  const packed = await gzip(file);
-  if (packed.length > MAX_FIRESTORE_BYTES){
-    throw new Error(`"${file.name}" is na comprimeren nog ${(packed.length/1024/1024).toFixed(1)}MB — dat is te groot om zonder aparte opslag te bewaren`);
+  const raw = new Uint8Array(await file.arrayBuffer());
+  if (raw.length > MAX_FIRESTORE_BYTES){
+    throw new Error(`"${file.name}" is ${(raw.length/1024/1024).toFixed(1)}MB — dat is te groot om zonder aparte opslag te bewaren (max ${MAX_FIRESTORE_BYTES/1024/1024}MB)`);
   }
-  const chunks = Math.ceil(packed.length / CHUNK_BYTES);
+  const sha = await fileHash(raw);
+  const chunks = Math.ceil(raw.length / CHUNK_BYTES);
   for (let c = 0; c < chunks; c++){
-    const slice = packed.subarray(c * CHUNK_BYTES, (c + 1) * CHUNK_BYTES);
+    const slice = raw.subarray(c * CHUNK_BYTES, (c + 1) * CHUNK_BYTES);
     await setDoc(doc(db, "uploads", jobId, "files", `${index}_${c}`), { b: Bytes.fromUint8Array(slice) });
     if (onProgress) onProgress(Math.min(file.size, (c + 1) / chunks * file.size));
   }
-  return { kind: "firestore", chunks, gz: typeof CompressionStream !== "undefined", bytes: file.size };
+  return { kind: "firestore", chunks, bytes: raw.length, sha };
 }
 
-/* Haalt zo'n bestand weer op en biedt het aan als download. */
+/* Haalt zo'n bestand weer op, controleert het en biedt het aan als download. */
 async function downloadStoredFile(jobId, index, desc, fileName){
   const parts = [];
   for (let c = 0; c < desc.chunks; c++){
@@ -491,7 +491,20 @@ async function downloadStoredFile(jobId, index, desc, fileName){
   const joined = new Uint8Array(total);
   let at = 0;
   for (const p of parts){ joined.set(p, at); at += p.length; }
-  const raw = desc.gz ? await gunzip(joined) : joined;
+
+  // oudere opdrachten zijn nog samengeperst opgeslagen
+  const raw = desc.gz && typeof DecompressionStream !== "undefined"
+    ? new Uint8Array(await new Response(new Blob([joined]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer())
+    : joined;
+
+  if (desc.bytes && raw.length !== desc.bytes){
+    throw new Error(`het bestand is onvolledig (${raw.length} van ${desc.bytes} bytes)`);
+  }
+  if (desc.sha){
+    const nu = await fileHash(raw);
+    if (nu && nu !== desc.sha) throw new Error("de vingerafdruk klopt niet — het bestand is onderweg gewijzigd");
+  }
+
   const url = URL.createObjectURL(new Blob([raw], { type: "application/octet-stream" }));
   const a = document.createElement("a");
   a.href = url; a.download = fileName || "model.stl";
@@ -3465,7 +3478,9 @@ function jobFileButton(item, part){
   if (part.storage?.kind === "firestore" && item.uploadId){
     return `<button class="btn btn-ghost btn-sm" data-file="${esc(item.uploadId)}"
       data-index="${part.index}" data-chunks="${part.storage.chunks}"
-      data-gz="${part.storage.gz ? 1 : 0}" data-name="${esc(part.fileName || 'model.stl')}">
+      data-gz="${part.storage.gz ? 1 : 0}" data-bytes="${part.storage.bytes || 0}"
+      data-sha="${esc(part.storage.sha || '')}" data-name="${esc(part.fileName || 'model.stl')}"
+      title="${esc(part.fileName || '')}${part.storage.sha ? ' · SHA-256 ' + part.storage.sha.slice(0,12) : ''}">
       ${ic("download")} Bestand</button>`;
   }
   return ``;
@@ -3477,8 +3492,12 @@ function attachFileHandlers(){
       btn.disabled = true;
       btn.innerHTML = `${ic("spinner")} Ophalen…`;
       try{
-        await downloadStoredFile(btn.dataset.file, +btn.dataset.index,
-          { chunks: +btn.dataset.chunks, gz: btn.dataset.gz === "1" }, btn.dataset.name);
+        await downloadStoredFile(btn.dataset.file, +btn.dataset.index, {
+          chunks: +btn.dataset.chunks,
+          gz: btn.dataset.gz === "1",
+          bytes: +btn.dataset.bytes || 0,
+          sha: btn.dataset.sha || null,
+        }, btn.dataset.name);
       }catch(err){ notify("Ophalen mislukt: " + err.message); }
       finally{ btn.disabled = false; btn.innerHTML = was; }
     };
