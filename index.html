@@ -180,6 +180,9 @@ function notify(msg){
 let state = {
   view: "shop",
   products: [],
+  productsLoaded: false,
+  productsError: null,
+  seedError: null,
   orders: [],
   cart: JSON.parse(sessionStorage.getItem('lc_cart') || "[]"),
   user: null,       // firebase auth user
@@ -246,8 +249,26 @@ function listenProducts(){
   const q = query(collection(db, "products"), orderBy("name"));
   onSnapshot(q, (snap) => {
     state.products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    state.productsLoaded = true;
+    state.productsError = null;
     if (state.view === "shop" || state.view === "product" || state.view === "admin") render();
-  }, (err) => notify("Kan producten niet laden: " + err.message));
+  }, (err) => {
+    state.productsLoaded = true;
+    state.productsError = err;
+    render();
+  });
+}
+
+/* Vertaalt een Firestore-fout naar iets waar je wat mee kunt. */
+function firestoreHint(err){
+  const code = err?.code || "";
+  if (/permission-denied/.test(code))
+    return "Firestore weigert toegang. Zet in de Firebase Console de regels op testmodus (Firestore Database → Rules), of controleer of ze niet verlopen zijn — testregels vervallen na 30 dagen.";
+  if (/unavailable|failed-precondition|not-found/.test(code))
+    return "De database is nog niet aangemaakt. Ga in de Firebase Console naar Build → Firestore Database en klik op Create database.";
+  if (/unauthenticated/.test(code))
+    return "Firebase herkent de site niet. Controleer of de configuratie bij het juiste project hoort.";
+  return err?.message || String(err);
 }
 
 /* Bouwt een productafbeelding als SVG: een gestapeld "geprint" object.
@@ -271,8 +292,17 @@ const PROFILE = {
 };
 
 async function seedIfEmpty(){
-  const snap = await getDoc(doc(db, "meta", "seeded_v2"));
-  if (snap.exists()) return;
+  try{
+    const snap = await getDoc(doc(db, "meta", "seeded_v2"));
+    if (snap.exists()) return;
+    await writeSeed();
+  }catch(err){
+    // Stil falen zou een lege collectie opleveren zonder uitleg; de shop toont de reden.
+    state.seedError = err;
+    if (state.view === "shop") render();
+  }
+}
+async function writeSeed(){
   const seed = [
     {
       name:"Plantenvaas — Spiraal", price:18.0, stock:15, category:"Wonen",
@@ -477,7 +507,7 @@ function viewShop(){
     <section class="hero">
       <div class="layers"><div class="layers-inner">${layers}</div></div>
       <div>
-        <p class="eyebrow">FDM &amp; resin print-on-demand</p>
+        <p class="eyebrow">FDM print-on-demand</p>
         <h1 class="font-display">Kies een model, of print jouw eigen ontwerp.</h1>
         <p>Bestel uit onze collectie of upload je eigen STL/OBJ-bestand. Wij printen het en sturen het naar jouw adres.</p>
         <button class="btn btn-orange" onclick="go('custom')">⬆ Upload je eigen model</button>
@@ -487,10 +517,47 @@ function viewShop(){
       <h2 class="font-display" style="font-size:20px;">Collectie</h2>
       <span class="muted font-mono" style="font-size:12px;">${state.products.length} producten</span>
     </div>
-    <div class="grid">${cards || `<p class="muted" style="grid-column:1/-1;">Nog geen producten.</p>`}</div>
+    <div class="grid">${cards || `<div style="grid-column:1/-1;">${emptyCollectionNotice()}</div>`}</div>
   `;
 }
+/* Een lege collectie heeft altijd een oorzaak — die tonen we in plaats van niets. */
+function emptyCollectionNotice(){
+  if (!state.productsLoaded && !state.productsError){
+    return `<p class="muted" style="font-size:13px;">Collectie laden…</p>`;
+  }
+  const err = state.productsError || state.seedError;
+  if (err){
+    return `
+      <div class="cart-item" style="border-color:var(--orange);">
+        <p style="font-size:13px;margin:0 0 8px;color:var(--orange);font-weight:600;">De collectie kan niet geladen worden</p>
+        <p class="muted" style="font-size:13px;margin:0 0 8px;">${esc(firestoreHint(err))}</p>
+        <p class="muted font-mono" style="font-size:11px;margin:0;">${esc(err.code || err.message || String(err))}</p>
+      </div>`;
+  }
+  return `
+    <div class="cart-item">
+      <p style="font-size:13px;margin:0 0 8px;">Er staan nog geen producten in de collectie.</p>
+      <p class="muted" style="font-size:13px;margin:0 0 12px;">De drie voorbeeldproducten worden normaal automatisch toegevoegd. Zijn ze verwijderd, of ging dat de eerste keer mis, dan kun je ze hier opnieuw plaatsen.</p>
+      <button class="btn btn-orange" id="reseedBtn">Voorbeeldproducten toevoegen</button>
+    </div>`;
+}
+window.__reseed = async (btn) => {
+  btn.disabled = true;
+  btn.textContent = "Bezig…";
+  try{
+    await writeSeed();
+    state.seedError = null;
+    notify("Voorbeeldproducten toegevoegd");
+  }catch(err){
+    state.seedError = err;
+    notify("Mislukt: " + firestoreHint(err));
+    render();
+  }
+};
+
 function attachShopHandlers(){
+  const reseed = document.getElementById('reseedBtn');
+  if (reseed) reseed.onclick = () => window.__reseed(reseed);
   document.querySelectorAll('[data-open]').forEach(btn=>{
     btn.onclick = () => {
       state.selectedProduct = state.products.find(p=>p.id===btn.dataset.open);
@@ -590,7 +657,7 @@ function viewCustom(){
       <div id="customForm" class="hidden">
         <label class="field-label">Materiaal</label>
         <select class="field" id="customMaterial">
-          <option>PLA</option><option>PLA+</option><option>PETG</option><option>ABS</option><option>Resin</option>
+          <option>PLA</option><option>PLA+</option><option>PETG</option><option>ABS</option><option>TPU</option>
         </select>
         <label class="field-label">Geschatte prijs</label>
         <p class="price" id="estPrice" style="font-size:18px;"></p>
@@ -926,7 +993,7 @@ function viewAdmin(){
               <div>
                 <label class="field-label">Materiaal</label>
                 <select class="field" id="pMaterial">
-                  ${["PLA","PLA+","PETG","ABS","TPU","Resin"].map(m=>`<option ${m===(ed?.material||'PLA')?'selected':''}>${m}</option>`).join("")}
+                  ${["PLA","PLA+","PETG","ABS","TPU"].map(m=>`<option ${m===(ed?.material||'PLA')?'selected':''}>${m}</option>`).join("")}
                 </select>
               </div>
               <div>
