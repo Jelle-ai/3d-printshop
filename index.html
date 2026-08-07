@@ -442,8 +442,63 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, collection, doc, setDoc, getDoc, addDoc, updateDoc, deleteDoc,
-  onSnapshot, query, where, orderBy, serverTimestamp
+  onSnapshot, query, where, orderBy, serverTimestamp, Bytes
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+/* =====================================================================
+   Modellen bewaren zonder Firebase Storage.
+   Storage vraagt sinds eind 2024 een betaalplan. Firestore niet, en daar
+   past een model prima in: we persen het samen en knippen het in stukken
+   die elk onder de documentgrens van 1 MB blijven.
+   ===================================================================== */
+const CHUNK_BYTES = 700000;          // ruim onder de grens van 1 MiB
+const MAX_FIRESTORE_BYTES = 24 * 1024 * 1024;   // na comprimeren
+
+async function gzip(blob){
+  if (typeof CompressionStream === "undefined") return new Uint8Array(await blob.arrayBuffer());
+  const s = blob.stream().pipeThrough(new CompressionStream('gzip'));
+  return new Uint8Array(await new Response(s).arrayBuffer());
+}
+async function gunzip(bytes){
+  if (typeof DecompressionStream === "undefined") return bytes;
+  const s = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return new Uint8Array(await new Response(s).arrayBuffer());
+}
+
+/* Schrijft één bestand als een reeks documenten onder de opdracht. */
+async function storeFileInFirestore(jobId, index, file, onProgress){
+  const packed = await gzip(file);
+  if (packed.length > MAX_FIRESTORE_BYTES){
+    throw new Error(`"${file.name}" is na comprimeren nog ${(packed.length/1024/1024).toFixed(1)}MB — dat is te groot om zonder aparte opslag te bewaren`);
+  }
+  const chunks = Math.ceil(packed.length / CHUNK_BYTES);
+  for (let c = 0; c < chunks; c++){
+    const slice = packed.subarray(c * CHUNK_BYTES, (c + 1) * CHUNK_BYTES);
+    await setDoc(doc(db, "uploads", jobId, "files", `${index}_${c}`), { b: Bytes.fromUint8Array(slice) });
+    if (onProgress) onProgress(Math.min(file.size, (c + 1) / chunks * file.size));
+  }
+  return { kind: "firestore", chunks, gz: typeof CompressionStream !== "undefined", bytes: file.size };
+}
+
+/* Haalt zo'n bestand weer op en biedt het aan als download. */
+async function downloadStoredFile(jobId, index, desc, fileName){
+  const parts = [];
+  for (let c = 0; c < desc.chunks; c++){
+    const snap = await getDoc(doc(db, "uploads", jobId, "files", `${index}_${c}`));
+    if (!snap.exists()) throw new Error("een stuk van het bestand ontbreekt");
+    parts.push(snap.data().b.toUint8Array());
+  }
+  const total = parts.reduce((s, p) => s + p.length, 0);
+  const joined = new Uint8Array(total);
+  let at = 0;
+  for (const p of parts){ joined.set(p, at); at += p.length; }
+  const raw = desc.gz ? await gunzip(joined) : joined;
+  const url = URL.createObjectURL(new Blob([raw], { type: "application/octet-stream" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = fileName || "model.stl";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
 /* Storage wordt alleen gebruikt bij het uploaden van een eigen model. Door het
    pas dan te laden staat de winkel sneller op het scherm. */
 let storageMod = null;
@@ -1555,11 +1610,12 @@ async function placeOrder(shippingCountry, address, payment){
   const order = {
     uid: state.user.uid,
     userEmail: state.user.email,
-    items: state.cart.map(({id,productId,kind,name,price,qty,filament,dims,printTime,grams,jobParts,assembled})=>({
+    items: state.cart.map(({id,productId,kind,name,price,qty,filament,dims,printTime,grams,jobParts,assembled,uploadId})=>({
       id, productId: productId || id, kind, name, price, qty,
       filament: filament || null, dims: dims || null,
       printTime: printTime || null, grams: grams || null,
       jobParts: jobParts || null, assembled: assembled || false,
+      uploadId: uploadId || null,
     })),
     shippingCountry, shippingAddress: address,
     shippingCost: rate.price,
@@ -2256,15 +2312,7 @@ function viewCustom(){
             Op iPhone: kies <em>Bladeren</em> en zoek je bestanden in Bestanden of iCloud Drive.
           </p>
 
-          ${state.storageDown ? `
-          <div class="notice" style="margin-bottom:16px;">
-            <p class="notice-title">${ic("triangle-exclamation")} Bestanden versturen werkt nog niet</p>
-            <p class="muted" style="font-size:13px;margin:0;">
-              De bestandsopslag van de shop is nog niet ingesteld. Je kunt hier alles bekijken en
-              de prijs zien, maar het versturen lukt pas als dat geregeld is.
-            </p>
-          </div>` : ``}
-
+  
         ${parts.length ? parts.map(partCard).join("") : `
             <div class="cart-item" style="text-align:center;padding:28px;">
               <p class="muted" style="font-size:13px;margin:0;">Nog geen onderdelen. Upload hierboven je eerste bestand.</p>
@@ -2608,58 +2656,79 @@ async function addJobToCart(btn){
   const t = projectTotals();
 
   btn.disabled = true;
-  btn.textContent = "Uploaden…";
+  const totalBytes = ready.reduce((s, p) => s + p.fileSize, 0);
+  let doneBytes = 0;
+  const showProgress = (extra) => {
+    const pct = totalBytes ? Math.min(100, Math.round((doneBytes + extra) / totalBytes * 100)) : 0;
+    btn.innerHTML = `${ic("spinner")} Versturen… ${pct}%`;
+  };
+  showProgress(0);
+
   try{
-    const { getStorage, ref, uploadBytesResumable, getDownloadURL } = await loadStorage();
-    const store = getStorage(app);
-    // Firebase probeert een mislukte upload standaard tot tien minuten opnieuw.
-    // Zolang Storage niet is ingesteld blijft de knop dan eindeloos hangen;
-    // met deze grenzen weet je binnen een halve minuut waar je aan toe bent.
-    store.maxUploadRetryTime = 25000;
-    store.maxOperationRetryTime = 15000;
+    // Eerst het documenthok aanmaken: de bestanden hangen eronder.
+    const jobDoc = await addDoc(collection(db, "uploads"), {
+      uid: state.user.uid, createdAt: Date.now(), status: "bezig",
+    });
 
-    const totalBytes = ready.reduce((s, p) => s + p.fileSize, 0);
-    let doneBytes = 0;
-    const showProgress = (extra) => {
-      const pct = totalBytes ? Math.min(100, Math.round((doneBytes + extra) / totalBytes * 100)) : 0;
-      btn.innerHTML = `${ic("spinner")} Uploaden… ${pct}%`;
-    };
-    const stamp = Date.now();
+    const useStorage = !state.storageDown;
+    let storeApi = null;
+    if (useStorage){
+      try{
+        const api = await loadStorage();
+        const store = api.getStorage(app);
+        // Firebase probeert een mislukte upload standaard tot tien minuten
+        // opnieuw; zo weten we binnen een halve minuut waar we aan toe zijn.
+        store.maxUploadRetryTime = 25000;
+        store.maxOperationRetryTime = 15000;
+        storeApi = { ...api, store };
+      }catch(e){ storeApi = null; }
+    }
+
     const uploaded = [];
-
     for (let i = 0; i < ready.length; i++){
       const part = ready[i];
       showProgress(0);
-      const path = `uploads/${state.user.uid}/${stamp}_${i}_${part.fileName}`;
-      const sref = ref(store, path);
-      // Resumable geeft ons voortgang terug, zodat een groot bestand niet
-      // aanvoelt als een knop die niets doet.
-      const task = uploadBytesResumable(sref, part.file);
-      await new Promise((resolve, reject) => {
-        // Eigen tijdslimiet bovenop die van Firebase: blijft de teller op nul
-        // staan, dan is er geen verbinding met de opslag en heeft doorgaan
-        // geen zin. Zolang er bytes binnenkomen schuift de limiet mee.
-        let last = Date.now();
-        const watchdog = setInterval(() => {
-          if (Date.now() - last > 30000){
-            clearInterval(watchdog);
-            try{ task.cancel(); }catch(e){}
-            reject(Object.assign(new Error("geen antwoord van de opslag"), { code: "storage/retry-limit" }));
-          }
-        }, 2000);
-        task.on('state_changed',
-          snap => { last = Date.now(); showProgress(snap.bytesTransferred); },
-          err => { clearInterval(watchdog); reject(err); },
-          () => { clearInterval(watchdog); resolve(); });
-      });
+      let storage = null, url = null;
+
+      if (storeApi){
+        try{
+          const sref = storeApi.ref(storeApi.store, `uploads/${state.user.uid}/${jobDoc.id}_${i}_${part.fileName}`);
+          const task = storeApi.uploadBytesResumable(sref, part.file);
+          await new Promise((resolve, reject) => {
+            let last = Date.now();
+            const watchdog = setInterval(() => {
+              if (Date.now() - last > 30000){
+                clearInterval(watchdog);
+                try{ task.cancel(); }catch(e){}
+                reject(Object.assign(new Error("geen antwoord van de opslag"), { code: "storage/retry-limit" }));
+              }
+            }, 2000);
+            task.on("state_changed",
+              snap => { last = Date.now(); showProgress(snap.bytesTransferred); },
+              err => { clearInterval(watchdog); reject(err); },
+              () => { clearInterval(watchdog); resolve(); });
+          });
+          url = await storeApi.getDownloadURL(sref);
+          storage = { kind: "storage" };
+        }catch(err){
+          // Storage niet beschikbaar: vanaf hier alles via Firestore.
+          storeApi = null;
+          state.storageDown = true;
+        }
+      }
+
+      if (!storage){
+        storage = await storeFileInFirestore(jobDoc.id, i, part.file, done => showProgress(done));
+      }
+
       doneBytes += part.fileSize;
       showProgress(0);
-      const url = await getDownloadURL(sref);
       const est = partEstimate(part);
       const f = partFilament(part);
       uploaded.push({
         name: part.name || part.fileName,
-        fileName: part.fileName, fileSize: part.fileSize, storageUrl: url,
+        fileName: part.fileName, fileSize: part.fileSize,
+        storageUrl: url, storage,
         unit: part.unit, scalePct: part.scale, infill: part.infill, layerHeight: part.layer,
         qty: part.qty,
         sizeMm: partSize(part).map(v => Math.round(v)),
@@ -2671,11 +2740,13 @@ async function addJobToCart(btn){
       });
     }
 
-    const jobDoc = await addDoc(collection(db, "uploads"), {
+    await setDoc(doc(db, "uploads", jobDoc.id), {
+      uid: state.user.uid,
       uid: state.user.uid,
       parts: uploaded,
       assembled: !!state.assembled && t.assembly > 0,
       notes: state.projectNotes || "",
+      status: "klaar",
       totals: {
         parts: t.parts, qty: t.qty, grams: +t.grams.toFixed(1),
         seconds: Math.round(t.seconds), subtotal: +t.subtotal.toFixed(2),
@@ -2686,12 +2757,16 @@ async function addJobToCart(btn){
 
     addToCart({
       id: jobDoc.id, kind: "custom",
+      uploadId: jobDoc.id,
       name: uploaded.length === 1
         ? "Eigen model — " + uploaded[0].name
         : `Eigen opdracht — ${uploaded.length} onderdelen`,
       price: Math.round(t.total * 100) / 100,
       qty: 1,
-      jobParts: uploaded.map(u => ({ name: u.name, qty: u.qty, filament: u.filament })),
+      jobParts: uploaded.map((u, i) => ({
+        name: u.name, qty: u.qty, filament: u.filament,
+        fileName: u.fileName, index: i, storage: u.storage, storageUrl: u.storageUrl,
+      })),
       assembled: !!state.assembled && t.assembly > 0,
     });
 
@@ -3102,9 +3177,10 @@ function viewAdmin(){
         ${Array.isArray(i.jobParts) && i.jobParts.length ? `
           <div style="margin:2px 0 8px 20px;">
             ${i.jobParts.map(j=>`
-              <div class="row" style="gap:6px;font-size:12px;">
+              <div class="row" style="gap:7px;font-size:12px;flex-wrap:wrap;margin-bottom:4px;">
                 ${j.filament ? `<span class="fil-chip ${finishClass(j.filament.finish)}" style="width:11px;height:11px;border-radius:3px;background-color:${esc(j.filament.hex)};flex-shrink:0;"></span>` : ``}
                 <span class="muted">${j.qty}× ${esc(j.name)}${j.filament ? ` — ${esc(j.filament.type)} ${esc(j.filament.name)}` : ``}</span>
+                ${jobFileButton(i, j)}
               </div>`).join("")}
             <div class="muted font-mono" style="font-size:10px;margin-top:3px;">${i.assembled ? "GEASSEMBLEERD LEVEREN" : "LOS LEVEREN"}</div>
           </div>` : ``}`).join("")}
@@ -3377,6 +3453,38 @@ function attachFilamentHandlers(){
   };
 }
 
+/* --------------------------- beheer: bestanden --------------------------- */
+/* Het model moet er weer uit kunnen om te printen. Staat het in Storage, dan
+   is er een gewone link; staat het in Firestore, dan zetten we de stukken
+   hier weer aan elkaar. */
+function jobFileButton(item, part){
+  if (part.storageUrl){
+    return `<a class="btn btn-ghost btn-sm" href="${esc(part.storageUrl)}" target="_blank" rel="noopener" download>
+      ${ic("download")} Bestand</a>`;
+  }
+  if (part.storage?.kind === "firestore" && item.uploadId){
+    return `<button class="btn btn-ghost btn-sm" data-file="${esc(item.uploadId)}"
+      data-index="${part.index}" data-chunks="${part.storage.chunks}"
+      data-gz="${part.storage.gz ? 1 : 0}" data-name="${esc(part.fileName || 'model.stl')}">
+      ${ic("download")} Bestand</button>`;
+  }
+  return ``;
+}
+function attachFileHandlers(){
+  document.querySelectorAll('[data-file]').forEach(btn=>{
+    btn.onclick = async () => {
+      const was = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = `${ic("spinner")} Ophalen…`;
+      try{
+        await downloadStoredFile(btn.dataset.file, +btn.dataset.index,
+          { chunks: +btn.dataset.chunks, gz: btn.dataset.gz === "1" }, btn.dataset.name);
+      }catch(err){ notify("Ophalen mislukt: " + err.message); }
+      finally{ btn.disabled = false; btn.innerHTML = was; }
+    };
+  });
+}
+
 /* --------------------------- beheer: prijzen --------------------------- */
 const PRICING_FIELDS = [
   ["hourlyRate", "Machinetijd per uur (€)", 0.5],
@@ -3501,6 +3609,7 @@ function sizingFromForm(){
 function attachAdminHandlers(){
   attachFilamentHandlers();
   attachPricingHandlers();
+  attachFileHandlers();
   const sizingBox = document.getElementById('pSizing');
   if (sizingBox) sizingBox.onchange = () => {
     document.getElementById('sizingFields').classList.toggle('hidden', !sizingBox.checked);
