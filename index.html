@@ -99,6 +99,24 @@
   .pay-card{background:linear-gradient(135deg,#2a2f36,#1c2025);border:1px solid var(--surface2);border-radius:14px;padding:18px;margin-bottom:16px;}
   .pay-strip{font-family:'JetBrains Mono',monospace;font-size:16px;letter-spacing:.14em;margin:14px 0 6px;}
   .demo-banner{background:rgba(255,107,53,.12);border:1px solid var(--orange);color:var(--orange);border-radius:10px;padding:10px 12px;font-size:12px;margin-bottom:16px;}
+  /* --- bestellingsopvolging --- */
+  .track{display:flex;margin:16px 0 10px;}
+  .track-step{flex:1;position:relative;text-align:center;}
+  .track-step::before{content:"";position:absolute;top:7px;left:-50%;width:100%;height:2px;background:var(--surface2);}
+  .track-step:first-child::before{display:none;}
+  .track-step.done::before,.track-step.active::before{background:var(--teal);}
+  .track-dot{position:relative;z-index:1;display:block;width:16px;height:16px;border-radius:999px;background:var(--surface2);border:2px solid var(--surface2);margin:0 auto 7px;}
+  .track-step.done .track-dot{background:var(--teal);border-color:var(--teal);}
+  .track-step.active .track-dot{background:var(--orange);border-color:var(--orange);box-shadow:0 0 0 4px rgba(255,107,53,.18);}
+  .track-label{font-size:10px;color:var(--muted);line-height:1.3;display:block;padding:0 2px;}
+  .track-step.active .track-label{color:var(--text);font-weight:600;}
+  .eta{background:var(--surface2);border-radius:8px;padding:10px 12px;font-size:13px;margin:12px 0;}
+  .eta strong{color:var(--teal);}
+  .order-line{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--surface2);}
+  .order-line:first-of-type{border-top:none;}
+  .detail-toggle{background:none;border:none;color:var(--teal);font-size:12px;padding:8px 0 0;display:flex;align-items:center;gap:5px;}
+  .kv{display:flex;justify-content:space-between;gap:12px;font-size:12px;padding:3px 0;}
+  .kv span:first-child{color:var(--muted);}
   @media(max-width:640px){.hide-sm{display:none;}}
 </style>
 </head>
@@ -205,15 +223,37 @@ function go(view, extra){
 window.go = go;
 
 /* --------------------------- auth --------------------------- */
+/* Deze adressen krijgen automatisch beheerdersrechten. Dit is gemak, geen
+   beveiliging: de echte grens ligt in de Firestore-regels, want alles wat
+   hier staat draait in de browser van de bezoeker. */
+const ADMIN_EMAILS = ["jelle@mattan.be"];
+function isAdminEmail(email){ return ADMIN_EMAILS.includes(String(email || "").trim().toLowerCase()); }
+
+/* Tijdens registreren schrijft doRegister het profiel zelf. Deze callback vuurt
+   al vlak na het aanmaken van het account, dus vóór dat schrijven klaar is —
+   zonder deze vlag zou hij een leeg profiel aanmaken en naam en adres wissen. */
+let registering = false;
+
 onAuthStateChanged(auth, async (u) => {
   state.user = u;
   if (u) {
-    const snap = await getDoc(doc(db, "users", u.uid));
-    state.profile = snap.exists() ? snap.data() : null;
+    if (!registering) try{
+      state.profile = await loadOrCreateProfile(u);
+      state.profileError = null;
+    }catch(err){
+      // Firestore even niet bereikbaar mag je niet uitloggen. We werken verder
+      // met wat Auth ons geeft, zodat de accountknop blijft kloppen.
+      state.profileError = err;
+      state.profile = state.profile || {
+        name: (u.email || "").split("@")[0],
+        email: u.email, address: {}, isAdmin: isAdminEmail(u.email),
+      };
+    }
     listenOrders();
-    listenProducts(); // re-listen (admin sees all)
+    listenProducts(); // opnieuw luisteren (beheerder ziet alles)
   } else {
     state.profile = null;
+    state.profileError = null;
     state.orders = [];
     listenProducts();
   }
@@ -221,17 +261,43 @@ onAuthStateChanged(auth, async (u) => {
   render();
 });
 
+/* Haalt het profiel op, maakt het aan als het ontbreekt, en zorgt dat de
+   vaste beheerdersadressen hun rechten krijgen. */
+async function loadOrCreateProfile(u){
+  const profileRef = doc(db, "users", u.uid);
+  const snap = await getDoc(profileRef);
+  if (!snap.exists()){
+    const profile = {
+      name: (u.email || "").split("@")[0],
+      email: u.email, address: {},
+      isAdmin: isAdminEmail(u.email), createdAt: Date.now(),
+    };
+    await setDoc(profileRef, profile);
+    return profile;
+  }
+  const profile = snap.data();
+  if (isAdminEmail(u.email) && !profile.isAdmin){
+    await updateDoc(profileRef, { isAdmin: true });
+    profile.isAdmin = true;
+  }
+  return profile;
+}
+
 async function doRegister(name, email, password, address){
+  registering = true;
   try{
     const cred = await createUserWithEmailAndPassword(auth, email, password);
-    const profile = { name, email, address, isAdmin: false, createdAt: Date.now() };
+    const profile = { name, email, address, isAdmin: isAdminEmail(email), createdAt: Date.now() };
     await setDoc(doc(db, "users", cred.user.uid), profile);
-    // onAuthStateChanged leest het profiel al voordat setDoc klaar is, dus zetten we het hier zelf.
     state.profile = profile;
     renderAuthNav();
     notify("Account aangemaakt — welkom " + name);
     go("shop");
-  }catch(e){ notify("Fout: " + (e.message || e)); }
+  }catch(e){
+    notify("Fout: " + (e.message || e));
+  }finally{
+    registering = false;
+  }
 }
 async function doLogin(email, password){
   try{
@@ -924,23 +990,113 @@ function attachAuthHandlers(){
   };
 }
 
-function viewAccount(){
-  const orders = state.orders.map(o=>`
-    <div class="order-card" style="margin-bottom:10px;">
-      <div class="between" style="margin-bottom:6px;">
-        <span class="muted font-mono" style="font-size:11px;">${new Date(o.createdAt).toLocaleDateString('nl-BE')}</span>
+/* --------------------------- bestellingsopvolging --------------------------- */
+const ORDER_STEPS = ["In verwerking", "Wordt geprint", "Verzonden", "Geleverd"];
+/* Werkdagen na de bestelling: printen plus verzending, per bestemming. */
+const DELIVERY_DAYS = {
+  "België": [3, 5], "Nederland": [4, 6], "Duitsland": [4, 7], "Frankrijk": [4, 7],
+  "Andere EU-landen": [5, 9], "Buiten de EU": [8, 15],
+};
+function addWorkingDays(from, days){
+  const d = new Date(from);
+  let left = days;
+  while (left > 0){
+    d.setDate(d.getDate() + 1);
+    if (d.getDay() !== 0 && d.getDay() !== 6) left--;
+  }
+  return d;
+}
+function fmtDate(d){ return d.toLocaleDateString('nl-BE', { day:'numeric', month:'long' }); }
+function deliveryWindow(o){
+  const [min, max] = DELIVERY_DAYS[o.shippingCountry] || DELIVERY_DAYS["België"];
+  return { from: addWorkingDays(o.createdAt, min), to: addWorkingDays(o.createdAt, max) };
+}
+function orderNumber(o){ return "#" + String(o.id || "").slice(-6).toUpperCase(); }
+
+function orderTracker(o){
+  const idx = Math.max(0, ORDER_STEPS.indexOf(o.status));
+  return `<div class="track">${ORDER_STEPS.map((s,i)=>`
+    <div class="track-step ${i < idx ? 'done' : i === idx ? 'active' : ''}">
+      <span class="track-dot"></span><span class="track-label">${esc(s)}</span>
+    </div>`).join("")}</div>`;
+}
+function etaLine(o){
+  if (o.status === "Geleverd") return `<div class="eta">📦 <strong>Geleverd.</strong> Bedankt voor je bestelling!</div>`;
+  const w = deliveryWindow(o);
+  const verb = o.status === "Verzonden" ? "Onderweg — verwacht" : "Verwachte levering";
+  return `<div class="eta">🚚 ${verb} tussen <strong>${esc(fmtDate(w.from))}</strong> en <strong>${esc(fmtDate(w.to))}</strong></div>`;
+}
+window.__toggleOrder = (id) => {
+  state.__openOrder = state.__openOrder === id ? null : id;
+  render();
+};
+
+function orderCard(o){
+  const open = state.__openOrder === o.id;
+  const lines = o.items.map(i=>`
+    <div class="order-line">
+      <div class="admin-thumb">${ i.kind === 'custom' ? '📄' : productThumb(state.products.find(p=>p.id===i.id) || {}, 18) }</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;">${esc(i.name)}</div>
+        <div class="muted font-mono" style="font-size:11px;">${i.qty} × ${fmtEUR(i.price)}</div>
+      </div>
+      <span class="font-mono" style="font-size:12px;">${fmtEUR(i.price * i.qty)}</span>
+    </div>`).join("");
+  const a = o.shippingAddress || {};
+  return `
+    <div class="order-card" style="margin-bottom:12px;">
+      <div class="between" style="margin-bottom:2px;">
+        <span class="font-mono" style="font-size:12px;">${esc(orderNumber(o))}</span>
         <span class="badge">${esc(o.status)}</span>
       </div>
-      <div style="font-size:13px;margin-bottom:6px;">${o.items.map(i=>esc(i.name)).join(", ")}</div>
-      <div class="between font-mono" style="font-size:13px;"><span class="muted">Naar ${esc(o.shippingCountry)}</span><span>${fmtEUR(o.total)}</span></div>
-    </div>`).join("");
+      <div class="muted font-mono" style="font-size:11px;">Besteld op ${esc(new Date(o.createdAt).toLocaleDateString('nl-BE', { day:'numeric', month:'long', year:'numeric' }))}</div>
+      ${orderTracker(o)}
+      ${etaLine(o)}
+      ${lines}
+      <div class="kv" style="border-top:1px solid var(--surface2);margin-top:8px;padding-top:8px;">
+        <span>Totaal</span><span class="font-mono" style="color:var(--teal);font-weight:600;">${fmtEUR(o.total)}</span>
+      </div>
+      <button class="detail-toggle" onclick="window.__toggleOrder('${o.id}')">${open ? "▴ Minder details" : "▾ Meer details"}</button>
+      ${open ? `
+        <div style="margin-top:10px;">
+          <div class="kv"><span>Subtotaal</span><span class="font-mono">${fmtEUR(o.subtotal ?? 0)}</span></div>
+          <div class="kv"><span>Verzending</span><span class="font-mono">${fmtEUR(o.shippingCost ?? 0)}</span></div>
+          <div class="kv"><span>Betaalwijze</span><span class="font-mono">${esc(o.paymentMethod || "—")}${o.demoPayment ? " (testgeld)" : ""}</span></div>
+          ${o.paymentRef ? `<div class="kv"><span>Referentie</span><span class="font-mono">${esc(o.paymentRef)}</span></div>` : ``}
+          <div class="kv" style="margin-top:6px;"><span>Bezorgadres</span><span style="text-align:right;">${esc(a.street||'')}<br/>${esc(a.zip||'')} ${esc(a.city||'')}<br/>${esc(o.shippingCountry||'')}</span></div>
+        </div>` : ``}
+    </div>`;
+}
+
+function viewAccount(){
+  if (!state.user){
+    return `<div style="padding:32px 0;"><p class="muted">Je bent niet ingelogd.</p><button class="btn btn-orange" onclick="go('login')">Inloggen</button></div>`;
+  }
+  const a = state.profile?.address || {};
+  const naam = state.profile?.name || (state.user.email || "").split("@")[0];
+  const actief = state.orders.filter(o => o.status !== "Geleverd");
+  const afgerond = state.orders.filter(o => o.status === "Geleverd");
   return `
-    <div style="padding:32px 0;max-width:480px;">
-      <h1 class="font-display" style="font-size:22px;">Hallo, ${esc(state.profile?.name||'')}</h1>
-      <p class="muted" style="font-size:13px;margin-bottom:20px;">${esc(state.user?.email||'')}</p>
-      <h2 class="font-display" style="font-size:16px;margin-bottom:10px;">Mijn bestellingen</h2>
-      ${orders || `<p class="muted" style="font-size:13px;">Nog geen bestellingen.</p>`}
-      <button class="navbtn" style="margin-top:16px;color:var(--orange);border:none;background:none;" onclick="go('shop')">← Terug naar de shop</button>
+    <div style="padding:32px 0;max-width:520px;">
+      <h1 class="font-display" style="font-size:22px;margin-bottom:2px;">Hallo, ${esc(naam)}</h1>
+      <p class="muted" style="font-size:13px;margin:0 0 4px;">${esc(state.user.email || '')}</p>
+      ${state.profile?.isAdmin ? `<span class="cat-badge">Beheerder</span>` : ``}
+      ${a.street ? `<p class="muted" style="font-size:12px;margin:8px 0 0;">${esc(a.street)}, ${esc(a.zip||'')} ${esc(a.city||'')}</p>` : ``}
+      ${state.profileError ? `<p class="muted" style="font-size:12px;margin-top:8px;color:var(--orange);">Je profielgegevens konden niet geladen worden — je blijft wel ingelogd.</p>` : ``}
+
+      <h2 class="font-display" style="font-size:16px;margin:24px 0 10px;">
+        ${actief.length ? "Lopende bestellingen" : "Mijn bestellingen"}
+      </h2>
+      ${actief.map(orderCard).join("") || `<p class="muted" style="font-size:13px;">Je hebt momenteel geen lopende bestellingen.</p>`}
+
+      ${afgerond.length ? `
+        <h2 class="font-display" style="font-size:16px;margin:24px 0 10px;">Afgeleverd</h2>
+        ${afgerond.map(orderCard).join("")}` : ``}
+
+      <div class="row" style="margin-top:20px;">
+        <button class="navbtn" onclick="go('shop')">← Terug naar de shop</button>
+        <button class="navbtn" onclick="window.__logout()">Uitloggen</button>
+      </div>
     </div>`;
 }
 
