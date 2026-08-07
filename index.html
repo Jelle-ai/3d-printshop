@@ -4,11 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>LayerCraft — 3D-prints op maat</title>
-<meta name="theme-color" content="#F7F7F4" />
+<meta name="theme-color" content="#F5F4F0" />
 <meta name="description" content="3D-prints op maat. Kies uit de collectie of upload je eigen model — wij printen het in Bambu Lab-filament en sturen het op." />
 <script>
-  /* Thema meteen zetten, vóór de eerste verf, anders flitst de site even in de
-     verkeerde kleur. Standaard volgen we de voorkeur van het toestel. */
   (function(){
     var t;
     try{ t = localStorage.getItem('lc_theme'); }catch(e){}
@@ -20,271 +18,400 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<!-- Niet-blokkerend: de pagina verschijnt in systeemletters en wisselt zodra
-     de webfonts binnen zijn, in plaats van te wachten op Google. -->
 <link rel="stylesheet" media="print" onload="this.media='all'"
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
-<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+<noscript>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+</noscript>
 <style>
+  /* =================================================================
+     Technisch, niet zacht. Haarlijnen in plaats van schaduwen, bijna
+     rechte hoeken, cijfers altijd in mono, en één signaalkleur die
+     spaarzaam gebruikt wordt.
+     ================================================================= */
   :root{
-    --bg:#F7F7F4; --surface:#FFFFFF; --surface2:#EFEFEA; --line:#E3E3DC;
-    --text:#181A1D; --muted:#6C7178;
-    --orange:#D8451A; --teal:#0B7F76; --on-accent:#FFFFFF;
-    --swatch-ring:rgba(0,0,0,.20); --teal-glow:rgba(11,127,118,.22);
-    --shadow-sm:0 1px 2px rgba(24,26,29,.06);
-    --shadow:0 1px 3px rgba(24,26,29,.06), 0 10px 28px -14px rgba(24,26,29,.22);
-    --shadow-lg:0 2px 6px rgba(24,26,29,.07), 0 20px 44px -18px rgba(24,26,29,.28);
-    --header-bg:rgba(247,247,244,.82);
+    --paper:#F5F4F0; --surface:#FFFFFF; --surface2:#EDECE6; --line:#DEDCD3; --line-strong:#C6C3B7;
+    --ink:#111214; --muted:#6E6C64;
+    --accent:#FF3B00; --accent-ink:#FFFFFF; --signal:#0F766E;
+    --plate:#16171A;
+    --grid:rgba(17,18,20,.05);
   }
   :root[data-theme="dark"]{
-    --bg:#15171b; --surface:#1E2126; --surface2:#262A30; --line:#2E333A;
-    --text:#F2F1ED; --muted:#8B8F98;
-    --orange:#FF6B35; --teal:#2EC4B6; --on-accent:#15171b;
-    --swatch-ring:rgba(255,255,255,.16); --teal-glow:rgba(46,196,182,.24);
-    --shadow-sm:0 1px 2px rgba(0,0,0,.35);
-    --shadow:0 1px 3px rgba(0,0,0,.4), 0 10px 28px -14px rgba(0,0,0,.7);
-    --shadow-lg:0 2px 6px rgba(0,0,0,.45), 0 20px 44px -18px rgba(0,0,0,.8);
-    --header-bg:rgba(21,23,27,.82);
+    --paper:#0F1012; --surface:#16171A; --surface2:#1D1F23; --line:#26282C; --line-strong:#3A3D43;
+    --ink:#F0EFEA; --muted:#8E8C84;
+    --accent:#FF5A2B; --accent-ink:#111214; --signal:#2DD4BF;
+    --plate:#16171A;
+    --grid:rgba(240,239,234,.05);
   }
   *{box-sizing:border-box;}
   html{-webkit-text-size-adjust:100%;}
   body{
-    margin:0;background:var(--bg);color:var(--text);
-    font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-    line-height:1.55;-webkit-font-smoothing:antialiased;
+    margin:0;background:var(--paper);color:var(--ink);
+    font-family:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;
   }
-  .font-display{font-family:'Space Grotesk',-apple-system,BlinkMacSystemFont,sans-serif;font-weight:700;letter-spacing:-.015em;}
-  .font-mono{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;}
-  a{color:inherit;}
-  button, select, input, textarea{font-family:inherit;font-size:14px;}
+  .font-display{font-family:'Archivo','IBM Plex Sans',sans-serif;font-weight:800;letter-spacing:-.03em;line-height:1.05;}
+  .font-mono{font-family:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;}
+  a{color:inherit;text-decoration:none;}
+  button, select, input, textarea{font-family:inherit;font-size:14px;color:inherit;}
   button{cursor:pointer;}
-  :focus-visible{outline:2px solid var(--teal);outline-offset:2px;}
-  header{
-    position:sticky;top:0;z-index:30;background:var(--header-bg);
-    backdrop-filter:saturate(150%) blur(12px);-webkit-backdrop-filter:saturate(150%) blur(12px);
-    border-bottom:1px solid var(--line);
-  }
-  .header-inner{max-width:1040px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;}
-  .brand{display:flex;align-items:center;gap:9px;background:none;border:none;color:var(--text);padding:0;}
-  .brand span{font-size:18px;}
-  .navbtn{
-    display:flex;align-items:center;gap:6px;padding:8px 13px;border-radius:10px;
-    background:var(--surface);border:1px solid var(--line);color:var(--text);font-size:13px;
-    box-shadow:var(--shadow-sm);transition:border-color .15s, transform .15s;
-  }
-  .navbtn:hover{border-color:var(--muted);}
-  .navbtn:active{transform:translateY(1px);}
-  .navbtn.primary{background:var(--orange);color:var(--on-accent);border-color:transparent;font-weight:600;}
-  nav{display:flex;align-items:center;gap:8px;}
-  #authNav{display:flex;align-items:center;gap:8px;}
-  @media(max-width:640px){
-    .header-inner{padding:12px 14px;gap:8px;}
-    nav{gap:6px;}
-    #authNav{gap:6px;}
-    .navbtn{padding:8px 10px;}
-  }
-  main{max-width:1040px;margin:0 auto;padding:0 24px 110px;}
-  @media(max-width:640px){main{padding:0 16px 96px;}}
-  .hero{display:flex;flex-wrap:wrap;align-items:center;gap:40px;padding:64px 0 56px;}
-  /* Op een breed scherm staat de illustratie rechts naast de tekst in plaats
-     van erboven; row-reverse zet het eerste kind (de lagen) aan de rechterkant. */
-  @media(min-width:760px){
-    .hero{flex-direction:row-reverse;justify-content:space-between;gap:56px;padding:88px 0 68px;flex-wrap:nowrap;}
-    .layers{height:240px;width:240px;}
-    .layer{height:20px;margin-bottom:3px;}
-  }
-  .hero h1{font-size:clamp(30px,6vw,44px);line-height:1.08;margin:0 0 14px;max-width:16ch;}
-  .hero p{color:var(--muted);max-width:44ch;margin:0 0 24px;font-size:16px;}
-  .eyebrow{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--teal);margin:0 0 12px;}
-  .layers{position:relative;height:168px;width:168px;flex-shrink:0;}
-  .layers-inner{position:absolute;inset:0;display:flex;flex-direction:column-reverse;align-items:center;}
-  .layer{height:14px;border-radius:3px;margin-bottom:2px;animation:rise .9s cubic-bezier(.2,.7,.3,1) both;}
-  @keyframes rise{from{transform:translateY(16px);opacity:0}to{transform:translateY(0)}}
-  @media(prefers-reduced-motion:reduce){.layer{animation:none;}}
-  .section-head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:18px;}
-  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;}
-  @media(min-width:720px){.grid{grid-template-columns:repeat(3,1fr);gap:22px;}}
-  .card{
-    text-align:left;border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:13px;
-    background:var(--surface);border:1px solid var(--line);color:var(--text);
-    box-shadow:var(--shadow-sm);transition:transform .18s cubic-bezier(.2,.7,.3,1), box-shadow .18s;
-  }
-  .card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg);}
-  @media(prefers-reduced-motion:reduce){.card:hover{transform:none;}}
-  .thumb{width:100%;aspect-ratio:1/1;border-radius:11px;background:#22262c;display:flex;align-items:center;justify-content:center;font-size:32px;overflow:hidden;}
-  .thumb img{width:100%;height:100%;object-fit:cover;display:block;}
-  .price{font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--teal);letter-spacing:-.02em;}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
   .muted{color:var(--muted);}
-  .spec-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:10px;margin:18px 0;font-family:'JetBrains Mono',monospace;font-size:12px;}
-  .spec{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:11px 12px;}
-  .spec .label{color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.07em;display:block;margin-bottom:4px;}
-  input, textarea, select.field{
-    width:100%;background:var(--surface);border:1px solid var(--line);color:var(--text);
-    border-radius:10px;padding:10px 12px;margin-bottom:10px;transition:border-color .15s, box-shadow .15s;
-  }
-  input:focus, textarea:focus, select.field:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-glow);}
-  label.field-label{font-size:12px;color:var(--muted);display:block;margin-bottom:5px;}
-  .btn{padding:11px 18px;border-radius:11px;border:none;font-weight:600;font-size:14px;transition:filter .15s, transform .15s;}
-  .btn:hover{filter:brightness(1.06);}
-  .btn:active{transform:translateY(1px);}
-  .btn-orange{background:var(--orange);color:var(--on-accent);box-shadow:var(--shadow-sm);}
-  .btn-outline{background:transparent;border:1px solid var(--line);color:var(--text);}
-  .row{display:flex;align-items:center;gap:10px;}
-  .between{display:flex;align-items:center;justify-content:space-between;gap:10px;}
-  .card .price{white-space:nowrap;}
-  .back{background:none;border:none;color:var(--muted);font-size:13px;display:flex;align-items:center;gap:5px;padding:0;margin-bottom:18px;}
-  .back:hover{color:var(--text);}
-  .cart-item, .order-card, .admin-row{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow-sm);}
-  .badge{font-family:'JetBrains Mono',monospace;font-size:11px;padding:4px 11px;border-radius:999px;background:var(--surface2);color:var(--teal);}
-  .upload-box{
-    display:flex;flex-direction:column;align-items:center;gap:9px;border:1.5px dashed var(--line);
-    border-radius:16px;padding:38px 24px;text-align:center;background:var(--surface);
-    transition:border-color .15s, background .15s;
-  }
-  .upload-box:hover{border-color:var(--teal);}
-  .toast{
-    position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--surface);
-    border:1px solid var(--line);border-left:3px solid var(--teal);padding:13px 17px;border-radius:12px;
-    font-size:13px;z-index:50;box-shadow:var(--shadow-lg);max-width:calc(100vw - 32px);
-  }
-  .tabs{display:flex;gap:8px;margin-bottom:22px;flex-wrap:wrap;}
-  .tab{padding:7px 14px;border-radius:999px;font-size:13px;background:transparent;border:1px solid var(--line);color:var(--muted);}
-  .tab.active{background:var(--text);color:var(--bg);border-color:var(--text);font-weight:600;}
-  .stepper{display:flex;align-items:center;border:1px solid var(--line);border-radius:11px;overflow:hidden;background:var(--surface);}
-  .stepper button{width:34px;height:38px;background:transparent;border:none;color:var(--text);font-size:15px;}
-  .stepper button:hover{background:var(--surface2);}
-  .stepper span{width:32px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:14px;}
   .hidden{display:none !important;}
-  .qty-badge{position:absolute;top:-6px;right:-6px;background:var(--orange);color:var(--on-accent);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;border-radius:999px;min-width:18px;height:18px;display:flex;align-items:center;justify-content:center;}
   .rel{position:relative;}
+  .row{display:flex;align-items:center;gap:10px;}
+  .between{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+
+  /* ---------- strook + kop ---------- */
+  .ticker{
+    background:var(--ink);color:var(--paper);font-family:'IBM Plex Mono',monospace;
+    font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+  }
+  .ticker-inner{max-width:1140px;margin:0 auto;padding:7px 24px;display:flex;gap:22px;overflow:hidden;white-space:nowrap;}
+  .ticker-inner span:nth-child(n+3){opacity:.55;}
+  @media(max-width:640px){.ticker-inner{padding:6px 16px;gap:16px;}.ticker-inner span:nth-child(n+3){display:none;}}
+
+  header{position:sticky;top:0;z-index:40;background:var(--paper);border-bottom:1px solid var(--ink);}
+  .header-inner{max-width:1140px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;}
+  @media(max-width:640px){.header-inner{padding:12px 16px;}}
+  .brand{display:flex;align-items:center;gap:10px;background:none;border:none;color:var(--ink);padding:0;}
+  .brand-mark{width:22px;height:22px;flex-shrink:0;}
+  .brand-name{font-family:'Archivo',sans-serif;font-weight:800;font-size:17px;letter-spacing:-.02em;text-transform:uppercase;}
+  .nav-right{display:flex;align-items:center;gap:8px;}
+  .iconbtn{
+    width:40px;height:40px;display:flex;align-items:center;justify-content:center;
+    border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);
+    border-radius:3px;font-size:15px;transition:background .12s,border-color .12s;
+  }
+  .iconbtn:hover{background:var(--surface2);border-color:var(--ink);}
+  .iconbtn.accent{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);}
+  .cart-count{
+    position:absolute;top:-7px;right:-7px;min-width:19px;height:19px;padding:0 5px;
+    background:var(--accent);color:var(--accent-ink);border-radius:999px;
+    font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;
+    display:flex;align-items:center;justify-content:center;
+  }
+
+  /* ---------- uitklapmenu ---------- */
+  .menu-wrap{position:relative;}
+  .menu-panel{
+    position:absolute;right:0;top:calc(100% + 9px);min-width:250px;z-index:50;
+    background:var(--surface);border:1px solid var(--ink);border-radius:3px;
+    box-shadow:6px 6px 0 var(--ink);padding:6px;
+  }
+  :root[data-theme="dark"] .menu-panel{box-shadow:6px 6px 0 var(--line-strong);}
+  .menu-item{
+    display:flex;align-items:center;gap:11px;width:100%;padding:10px 11px;
+    background:none;border:none;border-radius:2px;font-size:14px;text-align:left;color:var(--ink);
+  }
+  .menu-item:hover{background:var(--surface2);}
+  .menu-item i{width:16px;text-align:center;color:var(--muted);}
+  .menu-item:hover i{color:var(--accent);}
+  .menu-sep{height:1px;background:var(--line);margin:6px 4px;}
+  .menu-label{
+    font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--muted);padding:9px 11px 5px;
+  }
+
+  /* ---------- raamwerk ---------- */
+  main{max-width:1140px;margin:0 auto;padding:0 24px 120px;}
+  @media(max-width:640px){main{padding:0 16px 96px;}}
+  .rule{height:1px;background:var(--line);margin:0;}
+  .section-head{
+    display:flex;align-items:flex-end;justify-content:space-between;gap:16px;
+    padding-bottom:12px;border-bottom:1px solid var(--ink);margin-bottom:22px;
+  }
+  .label{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);
+  }
+  .label-accent{color:var(--accent);}
+
+  /* ---------- hero ---------- */
+  .hero{padding:56px 0 44px;border-bottom:1px solid var(--ink);margin-bottom:32px;}
+  .hero-grid{display:grid;grid-template-columns:1fr;gap:28px;align-items:end;}
+  @media(min-width:820px){.hero-grid{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:48px;}}
+  .hero h1{font-size:clamp(34px,7vw,66px);margin:14px 0 0;max-width:15ch;}
+  .hero-sub{color:var(--muted);max-width:46ch;margin:18px 0 0;font-size:15px;}
+  .hero-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px;}
+  .spec-strip{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line);margin-top:34px;}
+  .spec-strip div{padding:14px 0 0;border-right:1px solid var(--line);}
+  .spec-strip div:last-child{border-right:none;}
+  .spec-strip dt{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 4px;}
+  .spec-strip dd{margin:0;font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:500;}
+
+  /* ---------- knoppen ---------- */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:9px;
+    padding:12px 20px;border-radius:3px;border:1px solid var(--ink);
+    font-weight:600;font-size:14px;background:var(--surface);color:var(--ink);
+    transition:transform .1s, box-shadow .1s, background .12s;
+  }
+  .btn-accent{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);}
+  .btn:hover{transform:translate(-1px,-1px);box-shadow:3px 3px 0 var(--ink);}
+  .btn-accent:hover{box-shadow:3px 3px 0 var(--ink);}
+  .btn:active{transform:none;box-shadow:none;}
+  .btn:disabled{opacity:.45;pointer-events:none;}
+  .btn-ghost{border-color:var(--line-strong);}
+  .btn-sm{padding:8px 13px;font-size:13px;}
+  .back{background:none;border:none;color:var(--muted);font-size:13px;display:inline-flex;align-items:center;gap:7px;padding:0;margin-bottom:20px;}
+  .back:hover{color:var(--accent);}
+
+  /* ---------- collectie ---------- */
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);border-top:1px solid var(--line);border-left:1px solid var(--line);}
+  @media(min-width:760px){.grid{grid-template-columns:repeat(3,1fr);}}
+  .card{
+    text-align:left;border:none;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--paper);color:var(--ink);
+    padding:14px;display:flex;flex-direction:column;gap:12px;transition:background .14s;
+  }
+  .card:hover{background:var(--surface);}
+  .thumb{width:100%;aspect-ratio:4/3;background:var(--plate);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;}
+  .thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+  .thumb i{font-size:30px;color:var(--muted);}
+  .card-title{font-size:14px;font-weight:600;line-height:1.3;}
+  .price{font-family:'IBM Plex Mono',monospace;font-weight:600;letter-spacing:-.02em;}
+  .card .price{white-space:nowrap;font-size:15px;}
+  .flag{
+    position:absolute;top:0;left:0;background:var(--accent);color:var(--accent-ink);
+    font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;
+    padding:4px 8px;
+  }
+
+  /* ---------- panelen ---------- */
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:16px;}
+  .panel + .panel{margin-top:14px;}
+  .panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--line);}
+  .panel-title{font-family:'Archivo',sans-serif;font-weight:700;font-size:14px;letter-spacing:-.01em;}
+  .cart-item, .order-card, .admin-row, .fil-block, .part-card{
+    background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:15px;
+  }
+  .kv{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:4px 0;}
+  .kv span:first-child{color:var(--muted);}
+  .kv span:last-child{font-family:'IBM Plex Mono',monospace;}
+
+  /* ---------- formulieren ---------- */
+  input, textarea, select.field{
+    width:100%;background:var(--surface);border:1px solid var(--line-strong);color:var(--ink);
+    border-radius:3px;padding:10px 12px;margin-bottom:10px;transition:border-color .12s;
+  }
+  input:focus, textarea:focus, select.field:focus{outline:none;border-color:var(--accent);}
+  label.field-label{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--muted);display:block;margin-bottom:5px;
+  }
   .checkbox-row{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--muted);margin-bottom:10px;}
-  .footer-note{font-size:11px;color:var(--muted);margin-top:14px;display:flex;gap:6px;}
-  /* --- productgalerij --- */
-  .product-layout{display:grid;grid-template-columns:1fr;gap:32px;}
-  @media(min-width:760px){.product-layout{grid-template-columns:1fr 1fr;gap:44px;align-items:start;}}
-  .gallery-main{width:100%;aspect-ratio:1/1;border-radius:18px;background:#22262c;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:72px;box-shadow:var(--shadow);}
-  .gallery-main img{width:100%;height:100%;object-fit:cover;display:block;}
-  .gallery-strip{display:flex;gap:9px;margin-top:12px;flex-wrap:wrap;}
-  .gallery-strip button{width:58px;height:58px;border-radius:11px;overflow:hidden;border:2px solid transparent;background:#22262c;padding:0;flex-shrink:0;transition:border-color .15s;}
-  .gallery-strip button.active{border-color:var(--teal);}
-  .gallery-strip img{width:100%;height:100%;object-fit:cover;display:block;}
-  .cat-badge{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--teal);background:var(--surface2);border-radius:999px;padding:5px 11px;margin-bottom:10px;}
-  .card-badge{position:absolute;top:12px;left:12px;z-index:1;font-family:'JetBrains Mono',monospace;font-size:10px;background:var(--orange);color:var(--on-accent);font-weight:700;border-radius:999px;padding:4px 9px;}
-  .stock-dot{display:inline-block;width:7px;height:7px;border-radius:999px;margin-right:6px;}
-  /* --- beheerformulier --- */
-  /* Onder 400px is twee kolommen te krap voor labels en getallen. */
   .form-grid{display:grid;grid-template-columns:1fr;gap:0 12px;}
   @media(min-width:400px){.form-grid{grid-template-columns:1fr 1fr;}}
-  /* Het beheerpaneel krijgt op een laptop het formulier naast de lijst. */
-  .admin-split{display:grid;grid-template-columns:1fr;gap:28px;align-items:start;}
-  @media(min-width:960px){.admin-split{grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:36px;}}
-  @media(min-width:960px){.admin-split > div:first-child{position:sticky;top:84px;}}
-  .img-tray{display:flex;flex-wrap:wrap;gap:9px;margin-bottom:10px;}
-  .img-slot{position:relative;width:64px;height:64px;border-radius:11px;overflow:hidden;border:1px solid var(--line);background:var(--surface2);}
-  .img-slot img{width:100%;height:100%;object-fit:cover;display:block;}
-  .img-slot button{position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:999px;border:none;background:rgba(0,0,0,.7);color:#fff;font-size:12px;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;}
-  .img-add{width:64px;height:64px;border-radius:11px;border:1.5px dashed var(--line);background:var(--surface);color:var(--muted);font-size:20px;display:flex;align-items:center;justify-content:center;}
-  .img-add:hover{border-color:var(--teal);color:var(--teal);}
-  .admin-row img{width:44px;height:44px;border-radius:9px;object-fit:cover;display:block;}
-  .admin-thumb{width:44px;height:44px;border-radius:9px;background:#22262c;display:flex;align-items:center;justify-content:center;font-size:20px;overflow:hidden;flex-shrink:0;}
-  /* --- demo-betaling --- */
-  .pay-card{background:linear-gradient(135deg,#2F353D,#1A1E23);color:#F2F1ED;border:1px solid rgba(255,255,255,.09);border-radius:16px;padding:20px;margin-bottom:18px;box-shadow:var(--shadow);}
-  .pay-card .muted{color:#9AA0A8;}
-  .pay-strip{font-family:'JetBrains Mono',monospace;font-size:16px;letter-spacing:.14em;margin:16px 0 6px;}
-  .demo-banner{background:color-mix(in srgb, var(--orange) 10%, transparent);border:1px solid var(--orange);color:var(--orange);border-radius:12px;padding:12px 14px;font-size:12px;margin-bottom:18px;}
-  /* --- bestellingsopvolging --- */
-  .track{display:flex;margin:18px 0 10px;}
-  .track-step{flex:1;position:relative;text-align:center;}
-  .track-step::before{content:"";position:absolute;top:7px;left:-50%;width:100%;height:2px;background:var(--line);}
-  .track-step:first-child::before{display:none;}
-  .track-step.done::before,.track-step.active::before{background:var(--teal);}
-  .track-dot{position:relative;z-index:1;display:block;width:16px;height:16px;border-radius:999px;background:var(--surface2);border:2px solid var(--line);margin:0 auto 8px;}
-  .track-step.done .track-dot{background:var(--teal);border-color:var(--teal);}
-  .track-step.active .track-dot{background:var(--orange);border-color:var(--orange);box-shadow:0 0 0 4px color-mix(in srgb, var(--orange) 20%, transparent);}
-  .track-label{font-size:10px;color:var(--muted);line-height:1.3;display:block;padding:0 2px;}
-  .track-step.active .track-label{color:var(--text);font-weight:600;}
-  .eta{background:var(--surface2);border-radius:11px;padding:11px 13px;font-size:13px;margin:14px 0;}
-  .eta strong{color:var(--teal);}
-  .order-line{display:flex;align-items:center;gap:11px;padding:9px 0;border-top:1px solid var(--line);}
-  .order-line:first-of-type{border-top:none;}
-  .detail-toggle{background:none;border:none;color:var(--teal);font-size:12px;padding:9px 0 0;display:flex;align-items:center;gap:5px;font-weight:600;}
-  .kv{display:flex;justify-content:space-between;gap:12px;font-size:12px;padding:3px 0;}
-  .kv span:first-child{color:var(--muted);}
-  /* --- filamentkiezer --- */
-  .fil-block{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;margin:20px 0;box-shadow:var(--shadow-sm);}
-  .fil-types{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px;}
-  .fil-type{padding:7px 13px;border-radius:999px;font-size:12px;background:transparent;border:1px solid var(--line);color:var(--muted);}
-  .fil-type.active{background:var(--teal);color:var(--surface);border-color:var(--teal);font-weight:600;}
-  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(40px,1fr));gap:9px;}
-  .swatch{position:relative;aspect-ratio:1/1;border-radius:10px;border:2px solid transparent;padding:0;box-shadow:inset 0 0 0 1px var(--swatch-ring);transition:transform .12s;}
-  .swatch:hover{transform:scale(1.07);}
-  .swatch.active{border-color:var(--teal);box-shadow:inset 0 0 0 1px var(--swatch-ring), 0 0 0 3px var(--teal-glow);}
-  .swatch .tick{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;}
-  .fil-chosen{display:flex;align-items:center;gap:13px;margin-top:15px;padding-top:14px;border-top:1px solid var(--line);}
-  .fil-chip{width:46px;height:46px;border-radius:11px;flex-shrink:0;box-shadow:inset 0 0 0 1px var(--swatch-ring);}
-  .fil-sheen{background-image:linear-gradient(115deg,rgba(255,255,255,0) 28%,rgba(255,255,255,.55) 44%,rgba(255,255,255,0) 60%);}
-  /* Bewust subtiel: een te sterke glans vertekent de kleur, en juist die moet kloppen. */
+  .stepper{display:flex;align-items:center;border:1px solid var(--line-strong);border-radius:3px;overflow:hidden;background:var(--surface);}
+  .stepper button{width:36px;height:40px;background:transparent;border:none;color:var(--ink);font-size:12px;}
+  .stepper button:hover{background:var(--surface2);}
+  .stepper span{width:34px;text-align:center;font-family:'IBM Plex Mono',monospace;font-size:14px;}
+  input[type=range]{accent-color:var(--accent);padding:0;background:none;border:none;}
+  .tabs{display:flex;gap:0;margin-bottom:22px;border-bottom:1px solid var(--ink);flex-wrap:wrap;}
+  .tab{
+    padding:9px 15px;font-size:13px;background:none;border:none;border-bottom:2px solid transparent;
+    color:var(--muted);margin-bottom:-1px;font-weight:500;
+  }
+  .tab.active{color:var(--ink);border-bottom-color:var(--accent);}
+
+  /* ---------- meldingen ---------- */
+  .toast{
+    position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);
+    border-radius:3px;padding:13px 18px;font-size:13px;z-index:60;max-width:calc(100vw - 32px);
+    display:flex;align-items:center;gap:10px;
+  }
+  .toast i{color:var(--accent);}
+  .notice{border:1px solid var(--accent);border-left-width:3px;border-radius:3px;padding:13px 15px;background:var(--surface);}
+  .notice-title{color:var(--accent);font-weight:600;font-size:13px;margin:0 0 6px;display:flex;align-items:center;gap:8px;}
+  .badge{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    padding:4px 9px;border:1px solid var(--line-strong);border-radius:2px;color:var(--muted);
+  }
+  .badge-accent{border-color:var(--accent);color:var(--accent);}
+  .footer-note{font-size:12px;color:var(--muted);margin-top:14px;display:flex;align-items:center;gap:8px;}
+
+  /* ---------- product ---------- */
+  .product-layout{display:grid;grid-template-columns:1fr;gap:30px;}
+  @media(min-width:820px){.product-layout{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:52px;align-items:start;}}
+  .viewer{width:100%;aspect-ratio:1/1;background:var(--plate);border:1px solid var(--line);border-radius:3px;overflow:hidden;position:relative;}
+  .viewer img{width:100%;height:100%;object-fit:cover;display:block;}
+  .viewer canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab;}
+  .viewer canvas:active{cursor:grabbing;}
+  .viewer-tag{
+    position:absolute;left:0;bottom:0;background:var(--ink);color:var(--paper);
+    font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;padding:5px 10px;
+  }
+  .viewer-hint{
+    position:absolute;right:8px;bottom:8px;color:var(--paper);opacity:.55;
+    font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
+  }
+  .strip{display:flex;gap:1px;margin-top:1px;background:var(--line);}
+  .strip button{
+    width:60px;height:60px;overflow:hidden;border:none;background:var(--plate);padding:0;flex-shrink:0;
+    position:relative;opacity:.5;transition:opacity .12s;
+  }
+  .strip button.active{opacity:1;}
+  .strip button.active::after{content:"";position:absolute;inset:auto 0 0 0;height:2px;background:var(--accent);}
+  .strip img{width:100%;height:100%;object-fit:cover;display:block;}
+  .strip i{color:var(--muted);}
+  .spec-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin:20px 0;}
+  .spec{background:var(--surface);padding:11px 12px;}
+  .spec .label{display:block;margin-bottom:3px;}
+  .spec-val{font-family:'IBM Plex Mono',monospace;font-size:13px;}
+  .stock-dot{display:inline-block;width:6px;height:6px;border-radius:999px;margin-right:7px;}
+
+  /* ---------- filament ---------- */
+  .fil-types{display:flex;flex-wrap:wrap;gap:0;margin-bottom:14px;border:1px solid var(--line-strong);border-radius:3px;overflow:hidden;}
+  .fil-type{
+    padding:8px 13px;font-size:12px;background:var(--surface);border:none;
+    border-right:1px solid var(--line);color:var(--muted);flex:1 1 auto;
+  }
+  .fil-type:last-child{border-right:none;}
+  .fil-type.active{background:var(--ink);color:var(--paper);font-weight:600;}
+  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(38px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);}
+  .swatch{position:relative;aspect-ratio:1/1;border:none;padding:0;}
+  .swatch.active::after{content:"";position:absolute;inset:0;border:2px solid var(--accent);}
+  .swatch .tick{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;}
+  .fil-chosen{display:flex;align-items:center;gap:13px;margin-top:14px;padding-top:13px;border-top:1px solid var(--line);}
+  .fil-chip{width:44px;height:44px;border-radius:2px;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(128,128,128,.35);}
+  .fil-sheen{background-image:linear-gradient(115deg,rgba(255,255,255,0) 28%,rgba(255,255,255,.5) 44%,rgba(255,255,255,0) 60%);}
   .fil-gloss{background-image:linear-gradient(115deg,rgba(255,255,255,0) 32%,rgba(255,255,255,.11) 46%,rgba(255,255,255,0) 60%);}
-  .preview-note{position:absolute;left:12px;bottom:12px;background:rgba(0,0,0,.66);color:#F2F1ED;font-family:'JetBrains Mono',monospace;font-size:10px;padding:5px 10px;border-radius:999px;}
-  /* --- beheer: filamenten --- */
   .fil-row{display:flex;align-items:center;gap:11px;padding:8px 0;border-top:1px solid var(--line);}
   .fil-row:first-of-type{border-top:none;}
-  .fil-dot{width:26px;height:26px;border-radius:8px;flex-shrink:0;box-shadow:inset 0 0 0 1px var(--swatch-ring);}
-  .toggle{width:42px;height:24px;border-radius:999px;border:none;background:var(--line);position:relative;flex-shrink:0;padding:0;transition:background .15s;}
-  .toggle.on{background:var(--teal);}
-  .toggle::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:999px;background:var(--surface);transition:left .15s;box-shadow:var(--shadow-sm);}
-  .toggle.on::after{left:21px;}
-  /* --- eigen opdracht met meerdere onderdelen --- */
+  .fil-dot{width:26px;height:26px;border-radius:2px;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(128,128,128,.35);}
+  .toggle{width:42px;height:23px;border-radius:2px;border:1px solid var(--line-strong);background:var(--surface2);position:relative;flex-shrink:0;padding:0;}
+  .toggle.on{background:var(--accent);border-color:var(--accent);}
+  .toggle::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:17px;border-radius:1px;background:var(--surface);transition:left .12s;}
+  .toggle.on::after{left:22px;background:var(--accent-ink);}
+
+  /* ---------- opdracht met onderdelen ---------- */
   .job-layout{display:grid;grid-template-columns:1fr;gap:24px;align-items:start;}
-  @media(min-width:900px){.job-layout{grid-template-columns:minmax(0,1fr) 320px;gap:32px;}}
-  .part-card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:16px;box-shadow:var(--shadow-sm);}
-  .part-name{font-size:15px;font-weight:600;margin:0;padding:8px 11px;}
+  @media(min-width:960px){.job-layout{grid-template-columns:minmax(0,1fr) 330px;gap:32px;}}
+  .part-card{margin-bottom:14px;}
+  .part-name{font-size:15px;font-weight:600;margin:0;padding:9px 11px;}
   .part-body{display:grid;grid-template-columns:1fr;gap:18px;}
-  @media(min-width:620px){.part-body{grid-template-columns:minmax(0,240px) minmax(0,1fr);gap:22px;}}
+  @media(min-width:640px){.part-body{grid-template-columns:minmax(0,260px) minmax(0,1fr);gap:24px;}}
   .part-price{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line);}
-  .job-summary{min-width:0;}
-  input[type=range]{accent-color:var(--teal);padding:0;background:none;border:none;}
-  /* --- skelet tijdens het laden --- */
-  .skel{background:var(--surface2);border-radius:11px;position:relative;overflow:hidden;}
-  .skel::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,color-mix(in srgb, var(--surface) 70%, transparent),transparent);animation:shimmer 1.4s infinite;}
+  .dropzone{
+    border:1px dashed var(--line-strong);border-radius:3px;padding:40px 24px;text-align:center;
+    background:var(--surface);display:flex;flex-direction:column;align-items:center;gap:10px;
+    transition:border-color .12s,background .12s;
+  }
+  .dropzone:hover{border-color:var(--accent);}
+  .dropzone i{font-size:26px;color:var(--muted);}
+  .dropzone:hover i{color:var(--accent);}
+  .upload-box{border:1px dashed var(--line-strong);border-radius:3px;padding:40px 24px;text-align:center;background:var(--surface);display:flex;flex-direction:column;align-items:center;gap:10px;}
+
+  /* ---------- opvolging ---------- */
+  .track{display:flex;margin:18px 0 12px;}
+  .track-step{flex:1;position:relative;text-align:center;}
+  .track-step::before{content:"";position:absolute;top:6px;left:-50%;width:100%;height:1px;background:var(--line-strong);}
+  .track-step:first-child::before{display:none;}
+  .track-step.done::before,.track-step.active::before{background:var(--accent);}
+  .track-dot{position:relative;z-index:1;display:block;width:13px;height:13px;border-radius:2px;background:var(--surface);border:1px solid var(--line-strong);margin:0 auto 8px;transform:rotate(45deg);}
+  .track-step.done .track-dot{background:var(--accent);border-color:var(--accent);}
+  .track-step.active .track-dot{background:var(--accent);border-color:var(--accent);width:15px;height:15px;}
+  .track-label{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);line-height:1.3;display:block;padding:0 2px;}
+  .track-step.active .track-label{color:var(--ink);font-weight:600;}
+  .eta{border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:3px;padding:12px 14px;font-size:13px;margin:14px 0;display:flex;align-items:flex-start;gap:10px;}
+  .eta i{color:var(--accent);margin-top:2px;}
+  .order-line{display:flex;align-items:center;gap:11px;padding:10px 0;border-top:1px solid var(--line);}
+  .order-line:first-of-type{border-top:none;}
+  .detail-toggle{background:none;border:none;color:var(--accent);font-size:12px;padding:10px 0 0;display:inline-flex;align-items:center;gap:7px;font-weight:600;}
+
+  /* ---------- betaling ---------- */
+  .pay-card{background:var(--ink);color:var(--paper);border-radius:3px;padding:20px;margin-bottom:18px;}
+  .pay-card .muted{color:rgba(240,239,234,.55);}
+  .pay-strip{font-family:'IBM Plex Mono',monospace;font-size:17px;letter-spacing:.16em;margin:16px 0 6px;}
+  .demo-banner{border:1px solid var(--accent);border-left-width:3px;border-radius:3px;padding:13px 15px;font-size:12.5px;margin-bottom:18px;background:var(--surface);}
+
+  /* ---------- beheer ---------- */
+  .admin-split{display:grid;grid-template-columns:1fr;gap:28px;align-items:start;}
+  @media(min-width:1000px){.admin-split{grid-template-columns:minmax(0,390px) minmax(0,1fr);gap:36px;}}
+  @media(min-width:1000px){.admin-split > div:first-child{position:sticky;top:86px;}}
+  .img-tray{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
+  .img-slot{position:relative;width:62px;height:62px;border-radius:2px;overflow:hidden;border:1px solid var(--line);background:var(--surface2);}
+  .img-slot img{width:100%;height:100%;object-fit:cover;display:block;}
+  .img-slot button{position:absolute;top:2px;right:2px;width:19px;height:19px;border-radius:2px;border:none;background:var(--ink);color:var(--paper);font-size:10px;display:flex;align-items:center;justify-content:center;padding:0;}
+  .img-add{width:62px;height:62px;border-radius:2px;border:1px dashed var(--line-strong);background:var(--surface);color:var(--muted);font-size:15px;display:flex;align-items:center;justify-content:center;}
+  .img-add:hover{border-color:var(--accent);color:var(--accent);}
+  .admin-row{display:flex;align-items:center;gap:11px;margin-bottom:8px;}
+  .admin-row img{width:42px;height:42px;border-radius:2px;object-fit:cover;display:block;}
+  .admin-thumb{width:42px;height:42px;border-radius:2px;background:var(--plate);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;color:var(--muted);}
+
+  /* ---------- skelet ---------- */
+  .skel{background:var(--surface2);position:relative;overflow:hidden;}
+  .skel::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,var(--line),transparent);animation:shimmer 1.5s infinite;}
   @keyframes shimmer{to{transform:translateX(100%)}}
+  @media(prefers-reduced-motion:reduce){.skel::after{animation:none;}}
   @media(max-width:640px){.hide-sm{display:none;}}
 </style>
 </head>
 <body>
 
+<div class="ticker">
+  <div class="ticker-inner">
+    <span>Bambu Lab X1C</span>
+    <span>256 &times; 256 &times; 256 mm</span>
+    <span>Verzending uit Lebbeke, BE</span>
+    <span>Prijs berekend uit volume en printtijd</span>
+  </div>
+</div>
+
 <header>
   <div class="header-inner">
-    <button class="brand" onclick="go('shop')">
-      <span style="color:var(--orange);font-size:20px;">◫</span>
-      <span class="font-display">LayerCraft</span>
+    <button class="brand" onclick="go('shop')" aria-label="Naar de collectie">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3"  y="15.5" width="18" height="3" fill="currentColor"/>
+        <rect x="5"  y="10.5" width="14" height="3" fill="currentColor" opacity=".72"/>
+        <rect x="7"  y="5.5"  width="10" height="3" fill="var(--accent)"/>
+      </svg>
+      <span class="brand-name">Layercraft</span>
     </button>
-    <nav>
-      <button class="navbtn" id="themeBtn" title="Licht of donker" aria-label="Wissel tussen licht en donker">◐</button>
-      <button class="navbtn" onclick="go('custom')">⬆ <span class="hide-sm">Eigen model</span></button>
-      <button class="navbtn rel" onclick="go('cart')">🛒 <span class="hide-sm">Winkelwagen</span>
-        <span id="cartBadge" class="qty-badge hidden">0</span>
+
+    <div class="nav-right">
+      <button class="iconbtn rel" id="navCart" onclick="go('cart')" aria-label="Winkelwagen" title="Winkelwagen">
+        <i class="fa-solid fa-cart-shopping" aria-hidden="true"></i>
+        <span id="cartBadge" class="cart-count hidden">0</span>
       </button>
-      <span id="authNav"></span>
-    </nav>
+      <div class="menu-wrap">
+        <button class="iconbtn" id="navMenu" aria-label="Menu" aria-expanded="false" title="Menu">
+          <i class="fa-solid fa-bars" aria-hidden="true"></i>
+        </button>
+        <div class="menu-panel hidden" id="menuPanel"></div>
+      </div>
+    </div>
   </div>
 </header>
 
-<!-- Deze inhoud staat er meteen, nog voor Firebase geladen is. Zonder dit
-     blijft het scherm een paar seconden leeg op een trage verbinding.
-     De eerste render van de app vervangt het door precies hetzelfde. -->
 <main id="app">
   <section class="hero">
-    <div class="layers"><div class="layers-inner" id="bootLayers"></div></div>
-    <div>
-      <p class="eyebrow">FDM print-on-demand</p>
-      <h1 class="font-display">Kies een model, of print jouw eigen ontwerp.</h1>
-      <p>Bestel uit onze collectie of upload je eigen STL. Wij printen het in Bambu Lab-filament en sturen het naar jouw adres.</p>
-      <button class="btn btn-orange" onclick="go('custom')">⬆ Upload je eigen model</button>
+    <div class="hero-grid">
+      <div>
+        <p class="label label-accent">01 &mdash; Print on demand</p>
+        <h1 class="font-display">Jouw ontwerp, laag voor laag.</h1>
+        <p class="hero-sub">Bestel uit de collectie of stuur je eigen model door. Wij printen het in Bambu Lab-filament en sturen het naar je adres.</p>
+        <div class="hero-actions">
+          <button class="btn btn-accent" onclick="go('custom')">
+            <i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true"></i> Upload je model
+          </button>
+        </div>
+      </div>
+      <dl class="spec-strip">
+        <div><dt>Printer</dt><dd>X1 Carbon</dd></div>
+        <div><dt>Bouwvolume</dt><dd>256&sup3; mm</dd></div>
+        <div><dt>Levering</dt><dd>3&ndash;5 dgn</dd></div>
+      </dl>
     </div>
   </section>
+
   <div class="section-head">
-    <h2 class="font-display" style="font-size:22px;margin:0;">Collectie</h2>
+    <div>
+      <p class="label" style="margin:0 0 4px;">02 &mdash; Collectie</p>
+      <h2 class="font-display" style="font-size:26px;margin:0;">Klaar om te printen</h2>
+    </div>
   </div>
   <div class="grid">
     <div class="card"><div class="thumb skel"></div><div><div class="skel" style="height:13px;width:75%;"></div><div class="skel" style="height:11px;width:45%;margin-top:8px;"></div></div></div>
@@ -295,39 +422,8 @@
 <div id="toast" class="toast hidden"></div>
 
 <script>
-  /* Kleine dingen die niet op Firebase hoeven te wachten. */
-  (function(){
-    var root = document.documentElement;
-    var btn = document.getElementById('themeBtn');
-    var meta = document.querySelector('meta[name="theme-color"]');
-    function paint(){
-      var dark = root.getAttribute('data-theme') === 'dark';
-      // het icoon toont waar je naartoe gaat, niet waar je bent
-      btn.textContent = dark ? '☀' : '☾';
-      btn.title = dark ? 'Naar licht' : 'Naar donker';
-      if (meta) meta.setAttribute('content', dark ? '#15171b' : '#F7F7F4');
-    }
-    btn.onclick = function(){
-      var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-      root.setAttribute('data-theme', next);
-      try{ localStorage.setItem('lc_theme', next); }catch(e){}
-      paint();
-    };
-    paint();
-    // de gestapelde lagen uit de hero, zodat ze meteen meebewegen
-    var host = document.getElementById('bootLayers');
-    if (host){
-      var html = '';
-      for (var i = 0; i < 8; i++){
-        html += '<div class="layer" style="width:' + (100 - i*7) + '%;background:' +
-          (i % 2 ? 'var(--teal)' : 'var(--orange)') + ';opacity:' + (0.3 + (i/8)*0.7) +
-          ';animation-delay:' + (i*0.1) + 's"></div>';
-      }
-      host.innerHTML = html;
-    }
-    // tot de app draait, laten we go() niets doen in plaats van te crashen
-    window.go = window.go || function(){};
-  })();
+  /* Tot de app draait mag niets crashen. */
+  window.go = window.go || function(){};
 </script>
 
 <!-- Firebase SDK (modular, v10) -->
@@ -386,7 +482,7 @@ const SHIPPING_RATES = [
 function fmtEUR(n){ return new Intl.NumberFormat("nl-BE",{style:"currency",currency:"EUR"}).format(n); }
 function notify(msg){
   const t = document.getElementById('toast');
-  t.textContent = "✓ " + msg;
+  t.innerHTML = '<i class="fa-solid fa-circle-check" aria-hidden="true"></i> ' + esc(msg);
   t.classList.remove('hidden');
   clearTimeout(window.__toastTimer);
   window.__toastTimer = setTimeout(()=>t.classList.add('hidden'), 3000);
@@ -764,15 +860,29 @@ function fitsPlate(sizeMm){
 /* --------------------------- STL inlezen --------------------------- */
 /* Leest een STL (binair of ASCII) en geeft het echte volume, de oppervlakte
    en de afmetingen terug. Volume via de som van getekende tetraëders. */
+/* Zoveel driehoeken houden we bij voor de 3D-weergave. Genoeg om elk model
+   herkenbaar te tonen, en klein genoeg om vlot te tekenen op een telefoon. */
+const PREVIEW_TRIANGLES = 16000;
+
 function parseStl(buffer){
   const view = new DataView(buffer);
   let count = 0, vol6 = 0, area2 = 0;
   const min = [Infinity,Infinity,Infinity], max = [-Infinity,-Infinity,-Infinity];
+  // steekproef voor de weergave: elke n-de driehoek, gelijkmatig over het model
+  const mesh = new Float32Array(PREVIEW_TRIANGLES * 9);
+  let kept = 0, step = 1;
 
   // Alles wordt al tijdens het lezen opgeteld; er wordt nooit een lijst met
   // driehoeken opgebouwd, zodat ook een bestand van tientallen MB's op een
   // telefoon niet het geheugen opblaast.
   function addTriangle(ax,ay,az, bx,by,bz, cx,cy,cz){
+    if (count % step === 0 && kept < PREVIEW_TRIANGLES){
+      const o = kept * 9;
+      mesh[o]=ax; mesh[o+1]=ay; mesh[o+2]=az;
+      mesh[o+3]=bx; mesh[o+4]=by; mesh[o+5]=bz;
+      mesh[o+6]=cx; mesh[o+7]=cy; mesh[o+8]=cz;
+      kept++;
+    }
     count++;
     vol6 += ax*(by*cz - bz*cy) - ay*(bx*cz - bz*cx) + az*(bx*cy - by*cx);
     const ux=bx-ax, uy=by-ay, uz=bz-az, vx=cx-ax, vy=cy-ay, vz=cz-az;
@@ -793,6 +903,7 @@ function parseStl(buffer){
 
   if (looksBinary){
     const n = view.getUint32(80, true);
+    step = Math.max(1, Math.ceil(n / PREVIEW_TRIANGLES));
     for (let i = 0; i < n; i++){
       const o = 84 + i * 50 + 12; // de normaalvector slaan we over
       addTriangle(
@@ -819,7 +930,106 @@ function parseStl(buffer){
     volume: Math.abs(vol6) / 6,        // mm³
     surface: area2 / 2,                // mm²
     size: [max[0]-min[0], max[1]-min[1], max[2]-min[2]],
+    center: [(min[0]+max[0])/2, (min[1]+max[1])/2, (min[2]+max[2])/2],
+    minZ: min[2],
+    mesh: mesh.subarray(0, kept * 9),
   };
+}
+
+/* =====================================================================
+   3D-weergave — eigen renderer op een canvas, zonder externe bibliotheek.
+   Driehoeken worden geprojecteerd, van achter naar voor getekend en vlak
+   belicht. Dat is licht genoeg voor een telefoon en toont het model in het
+   gekozen filament.
+   ===================================================================== */
+function drawMesh(canvas, geo, opts){
+  const { hex = "#B8BCC2", finish = "basic", yaw = 0.6, pitch = 0.5, plate = true } = opts || {};
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = canvas.clientWidth || 320, h = canvas.clientHeight || 320;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  const g = canvas.getContext('2d');
+  if (!g) return;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+
+  const m = geo.mesh;
+  if (!m || !m.length) return;
+
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const [cx, cyy] = geo.center;
+  const span = Math.max(geo.size[0], geo.size[1], geo.size[2]) || 1;
+  const zoom = Math.min(w, h) * 0.36 / span;
+  const ox = w / 2, oy = h / 2 + Math.min(w, h) * 0.10;
+
+  // z omhoog, y naar achter — zoals een print op een plaat staat
+  function project(x, y, z){
+    const dx = x - cx, dy = y - cyy, dz = z - geo.minZ;
+    const rx = dx * cy - dy * sy;
+    const ry = dx * sy + dy * cy;
+    const sx = ox + rx * zoom;
+    const sy2 = oy - (dz * cp - ry * sp) * zoom;
+    const depth = ry * cp + dz * sp;
+    return [sx, sy2, depth];
+  }
+
+  if (plate){
+    // plaatraster van 5 cm, zodat de schaal afleesbaar blijft
+    const half = PLATE.x / 2;
+    g.lineWidth = 1;
+    for (let v = -half; v <= half; v += 50){
+      const a = project(cx + v, cyy - half, geo.minZ), b = project(cx + v, cyy + half, geo.minZ);
+      const c = project(cx - half, cyy + v, geo.minZ), d = project(cx + half, cyy + v, geo.minZ);
+      g.strokeStyle = (v === -half || v === half) ? "rgba(255,255,255,.22)" : "rgba(255,255,255,.08)";
+      g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+      g.beginPath(); g.moveTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.stroke();
+    }
+  }
+
+  const n = m.length / 9;
+  const order = new Array(n);
+  const pts = new Float32Array(n * 6);
+  const shade = new Float32Array(n);
+  const depths = new Float32Array(n);
+  const light = [0.42, -0.55, 0.72];
+
+  for (let i = 0; i < n; i++){
+    const o = i * 9;
+    const A = project(m[o],   m[o+1], m[o+2]);
+    const B = project(m[o+3], m[o+4], m[o+5]);
+    const C = project(m[o+6], m[o+7], m[o+8]);
+    const p = i * 6;
+    pts[p]=A[0]; pts[p+1]=A[1]; pts[p+2]=B[0]; pts[p+3]=B[1]; pts[p+4]=C[0]; pts[p+5]=C[1];
+    order[i] = i;
+    // normaal in modelruimte volstaat voor vlakke belichting
+    const ux = m[o+3]-m[o], uy = m[o+4]-m[o+1], uz = m[o+5]-m[o+2];
+    const vx = m[o+6]-m[o], vy = m[o+7]-m[o+1], vz = m[o+8]-m[o+2];
+    let nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    nx/=len; ny/=len; nz/=len;
+    // de lichtrichting draait mee met het model
+    const lx = light[0]*cy - light[1]*sy, ly = light[0]*sy + light[1]*cy;
+    shade[i] = 0.30 + 0.70 * Math.abs(nx*lx + ny*ly + nz*light[2]);
+    // diepte van het zwaartepunt bepaalt de tekenvolgorde: achter eerst
+    depths[i] = (A[2] + B[2] + C[2]) / 3;
+  }
+  order.sort((a,b) => depths[a] - depths[b]);
+
+  const { r, g: gg, b } = hexToRgb(hex);
+  const gloss = finish === "silk" ? 0.30 : finish === "basic" ? 0.12 : 0;
+  for (const i of order){
+    const p = i * 6;
+    let f = shade[i];
+    if (gloss) f = Math.min(1.25, f + Math.pow(f, 6) * gloss * 2.2);
+    g.fillStyle = `rgb(${Math.round(r*f)},${Math.round(gg*f)},${Math.round(b*f)})`;
+    g.beginPath();
+    g.moveTo(pts[p], pts[p+1]);
+    g.lineTo(pts[p+2], pts[p+3]);
+    g.lineTo(pts[p+4], pts[p+5]);
+    g.closePath();
+    g.fill();
+  }
 }
 
 /* --------------------------- kleurhulpjes --------------------------- */
@@ -923,28 +1133,28 @@ async function writeSeed(){
       name:"Plantenvaas — Spiraal", price:18.0, stock:15, category:"Wonen",
       description:"Waterdichte vaas geprint in vase mode: één doorlopende wand van onder tot boven, zonder naden. De spiraal vangt het licht anders vanuit elke hoek. Geschikt voor droogbloemen of, met een glazen buisje erin, voor water.",
       material:"PETG", infill:"vase mode", layerHeight:"0.16mm", color:"Petrol",
-      dimensions:"Ø 90 × 180 mm", printTime:"5u 40m", weight:145, featured:true, icon:"🏺", shape:"vase",
+      dimensions:"Ø 90 × 180 mm", printTime:"5u 40m", weight:145, featured:true, icon:"cube", shape:"vase",
       images:[ printSvg(PROFILE.vase,"#2EC4B6","#25a99d","#22262c"), printSvg(PROFILE.vase,"#3ad4c5","#2EC4B6","#1a1d22") ],
     },
     {
       name:"Sleutelhanger — Hex Tag", price:6.5, stock:40, category:"Accessoires",
       description:"Compacte tag met zeshoekig patroon en versterkt ophangoog. Print snel, gaat lang mee, en kan op aanvraag met je eigen initialen in reliëf.",
       material:"PLA", infill:"20%", layerHeight:"0.2mm", color:"Oranje",
-      dimensions:"45 × 28 × 4 mm", printTime:"38m", weight:6, featured:false, icon:"🔑", shape:"tag",
+      dimensions:"45 × 28 × 4 mm", printTime:"38m", weight:6, featured:false, icon:"cube", shape:"tag",
       images:[ printSvg(PROFILE.tag,"#FF6B35","#e05528","#22262c"), printSvg(PROFILE.tag,"#ff8659","#FF6B35","#1a1d22") ],
     },
     {
       name:"Telefoonstandaard — Wedge", price:9.9, stock:25, category:"Bureau",
       description:"Stevige wig met een uitsparing voor de laadkabel, zodat je toestel opgeladen blijft staan. Past op vrijwel elke telefoon, met of zonder hoesje.",
       material:"PLA+", infill:"35%", layerHeight:"0.2mm", color:"Grijs",
-      dimensions:"80 × 70 × 62 mm", printTime:"2u 15m", weight:48, featured:false, icon:"📱", shape:"wedge",
+      dimensions:"80 × 70 × 62 mm", printTime:"2u 15m", weight:48, featured:false, icon:"cube", shape:"wedge",
       images:[ printSvg(PROFILE.wedge,"#c9cdd4","#a8adb6","#22262c"), printSvg(PROFILE.wedge,"#dfe3e9","#c9cdd4","#1a1d22") ],
     },
     {
       name:"Opbergdoosje — Op maat", price:0, stock:999, category:"Bureau",
       description:"Een doosje in precies de maat die jij nodig hebt. Geef lengte, breedte en hoogte op en de prijs volgt meteen — die hangt af van hoeveel filament erin gaat en hoe lang het printen duurt. Met een deksel dat op wrijving sluit.",
       material:"PLA Basic", infill:"20%", layerHeight:"0.20mm", color:"Naar keuze",
-      printTime:"varieert", weight:0, featured:true, icon:"📦", shape:"box",
+      printTime:"varieert", weight:0, featured:true, icon:"cube", shape:"box",
       sizing:{ enabled:true, def:[80,60,40], min:[30,30,15], max:[220,220,180], solidity:22, infill:20, layerHeight:"0.20mm" },
       images:[ printSvg(PROFILE.box,"#8E9089","#6f747d","#22262c") ],
     },
@@ -1067,7 +1277,7 @@ function productThumb(p, fontSize){
   const imgs = productImages(p);
   return imgs.length
     ? `<img src="${esc(imgs[0])}" alt="${esc(p.name||'')}" loading="lazy" />`
-    : `<span style="font-size:${fontSize||32}px;">${esc(p?.icon || "📦")}</span>`;
+    : `<i class="fa-solid fa-cube" aria-hidden="true"></i>`;
 }
 
 /* --------------------------- cart --------------------------- */
@@ -1082,19 +1292,74 @@ function removeFromCart(id,kind){ state.cart = state.cart.filter(x=>!(x.id===id&
 function setQty(id,kind,qty){ const it=state.cart.find(x=>x.id===id&&x.kind===kind); if(it) it.qty=Math.max(1,qty); saveCart(); render(); }
 window.__addToCart = addToCart; window.__removeFromCart = removeFromCart; window.__setQty = setQty;
 
-/* --------------------------- render: nav --------------------------- */
+/* --------------------------- render: menu --------------------------- */
+/* Eén knop in plaats van een rij: de balk blijft rustig en het menu draagt
+   alles wat je maar af en toe nodig hebt. */
+function ic(name, cls){ return `<i class="fa-solid fa-${name}${cls ? " " + cls : ""}" aria-hidden="true"></i>`; }
+
 function renderAuthNav(){
-  const el = document.getElementById('authNav');
-  if (state.user){
-    el.innerHTML = `
-      <button class="navbtn" onclick="go('account')">👤 <span class="hide-sm">${esc(state.profile?.name||'Account')}</span></button>
-      ${state.profile?.isAdmin ? `<button class="navbtn" style="color:var(--teal)" onclick="go('admin')">⚙ <span class="hide-sm">Beheer</span></button>` : ``}
-      <button class="navbtn" onclick="window.__logout()" title="Uitloggen">⎋</button>
-    `;
-  } else {
-    el.innerHTML = `<button class="navbtn primary" onclick="go('login')">👤 Account</button>`;
-  }
+  const panel = document.getElementById('menuPanel');
+  if (!panel) return;
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const naam = state.profile?.name || (state.user?.email || "").split("@")[0];
+
+  panel.innerHTML = `
+    <div class="menu-label">Winkel</div>
+    <button class="menu-item" data-go="shop">${ic("grip-lines","")} Collectie</button>
+    <button class="menu-item" data-go="custom">${ic("arrow-up-from-bracket")} Eigen model laten printen</button>
+    <button class="menu-item" data-go="cart">${ic("cart-shopping")} Winkelwagen</button>
+
+    <div class="menu-sep"></div>
+    <div class="menu-label">${state.user ? esc(naam) : "Account"}</div>
+    ${state.user ? `
+      <button class="menu-item" data-go="account">${ic("user")} Mijn bestellingen</button>
+      ${state.profile?.isAdmin ? `<button class="menu-item" data-go="admin">${ic("sliders")} Shopbeheer</button>` : ``}
+      <button class="menu-item" id="menuLogout">${ic("right-from-bracket")} Uitloggen</button>
+    ` : `
+      <button class="menu-item" data-go="login">${ic("right-to-bracket")} Inloggen of registreren</button>
+    `}
+
+    <div class="menu-sep"></div>
+    <button class="menu-item" id="menuTheme">${ic(dark ? "sun" : "moon")} ${dark ? "Licht thema" : "Donker thema"}</button>
+  `;
+
+  panel.querySelectorAll('[data-go]').forEach(b=>{
+    b.onclick = () => { closeMenu(); go(b.dataset.go); };
+  });
+  const out = document.getElementById('menuLogout');
+  if (out) out.onclick = () => { closeMenu(); doLogout(); };
+  const th = document.getElementById('menuTheme');
+  if (th) th.onclick = () => { toggleTheme(); renderAuthNav(); };
 }
+
+function closeMenu(){
+  document.getElementById('menuPanel')?.classList.add('hidden');
+  document.getElementById('navMenu')?.setAttribute('aria-expanded', 'false');
+}
+function toggleTheme(){
+  const root = document.documentElement;
+  const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  root.setAttribute('data-theme', next);
+  try{ localStorage.setItem('lc_theme', next); }catch(e){}
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', next === 'dark' ? '#0F1012' : '#F5F4F0');
+  if (state.view === "product" || state.view === "custom") render();  // de 3D-weergave hertekenen
+}
+
+(function initMenu(){
+  const btn = document.getElementById('navMenu');
+  const panel = document.getElementById('menuPanel');
+  if (!btn || !panel) return;
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    const open = panel.classList.toggle('hidden') === false;
+    btn.setAttribute('aria-expanded', String(open));
+  };
+  document.addEventListener('click', (e) => {
+    if (!panel.classList.contains('hidden') && !panel.contains(e.target)) closeMenu();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+})();
+
 window.__logout = doLogout;
 
 function renderCartBadge(){
@@ -1124,45 +1389,58 @@ function render(){
 }
 
 function viewShop(){
-  const layerColors = ["var(--orange)","var(--teal)"];
-  const layers = Array.from({length:8}).map((_,i)=>`<div class="layer" style="width:${100-i*7}%;background:${layerColors[i%2]};opacity:${0.3+(i/8)*0.7};animation-delay:${i*0.1}s"></div>`).join("");
   const cards = state.products.map(p => `
     <button class="card rel" data-open="${p.id}">
-      ${p.featured ? `<span class="card-badge">Uitgelicht</span>` : ``}
+      ${p.featured ? `<span class="flag">Uitgelicht</span>` : ``}
       <div class="thumb">${productThumb(p)}</div>
       <div>
-        <div style="font-size:14px;">${esc(p.name)}</div>
-        <div class="muted font-mono" style="font-size:11px;margin-top:4px;">${esc(p.material||'')}${p.layerHeight ? " · " + esc(p.layerHeight) : ""}</div>
-        <div class="between" style="margin-top:6px;">
+        <div class="card-title">${esc(p.name)}</div>
+        <div class="label" style="margin-top:5px;">${esc(p.material||"")}${p.layerHeight ? " / " + esc(p.layerHeight) : ""}</div>
+        <div class="between" style="margin-top:8px;">
           <span class="price">${sizingOf(p) ? "vanaf " : ""}${fmtEUR(sizingOf(p) ? basePriceOf(p) : p.price)}</span>
-          ${sizingOf(p) ? `<span class="muted font-mono" style="font-size:10px;">op maat</span>`
-            : p.stock > 0 ? `` : `<span class="muted font-mono" style="font-size:10px;">uitverkocht</span>`}
+          ${sizingOf(p) ? `<span class="label">Op maat</span>`
+            : p.stock > 0 ? `` : `<span class="label">Uitverkocht</span>`}
         </div>
       </div>
     </button>`).join("");
+
   return `
     <section class="hero">
-      <div class="layers"><div class="layers-inner">${layers}</div></div>
-      <div>
-        <p class="eyebrow">FDM print-on-demand</p>
-        <h1 class="font-display">Kies een model, of print jouw eigen ontwerp.</h1>
-        <p>Bestel uit onze collectie of upload je eigen STL. Wij printen het in Bambu Lab-filament en sturen het naar jouw adres.</p>
-        <button class="btn btn-orange" onclick="go('custom')">⬆ Upload je eigen model</button>
+      <div class="hero-grid">
+        <div>
+          <p class="label label-accent">01 &mdash; Print on demand</p>
+          <h1 class="font-display">Jouw ontwerp, laag voor laag.</h1>
+          <p class="hero-sub">Bestel uit de collectie of stuur je eigen model door. Wij printen het in Bambu Lab-filament en sturen het naar je adres.</p>
+          <div class="hero-actions">
+            <button class="btn btn-accent" onclick="go('custom')">${ic("arrow-up-from-bracket")} Upload je model</button>
+            <button class="btn btn-ghost" onclick="document.querySelector('.grid')?.scrollIntoView({behavior:'smooth',block:'start'})">Bekijk de collectie</button>
+          </div>
+        </div>
+        <dl class="spec-strip">
+          <div><dt>Printer</dt><dd>X1 Carbon</dd></div>
+          <div><dt>Bouwvolume</dt><dd>256&sup3; mm</dd></div>
+          <div><dt>Levering</dt><dd>3&ndash;5 dgn</dd></div>
+        </dl>
       </div>
     </section>
+
     <div class="section-head">
-      <h2 class="font-display" style="font-size:22px;margin:0;">Collectie</h2>
-      ${state.products.length ? `<span class="muted font-mono" style="font-size:12px;">${state.products.length} ${state.products.length === 1 ? 'product' : 'producten'}</span>` : ``}
+      <div>
+        <p class="label" style="margin:0 0 4px;">02 &mdash; Collectie</p>
+        <h2 class="font-display" style="font-size:26px;margin:0;">Klaar om te printen</h2>
+      </div>
+      ${state.products.length ? `<span class="label">${state.products.length} ${state.products.length === 1 ? "artikel" : "artikelen"}</span>` : ``}
     </div>
-    <div class="grid">${cards || `<div style="grid-column:1/-1;">${emptyCollectionNotice()}</div>`}</div>
+    <div class="grid">${cards || `<div style="grid-column:1/-1;padding:20px;">${emptyCollectionNotice()}</div>`}</div>
   `;
 }
+
 /* Een lege collectie heeft altijd een oorzaak — die tonen we in plaats van niets. */
 function emptyCollectionNotice(){
   if (!state.productsLoaded && state.productsStalled){
     return `
-      <div class="cart-item" style="border-color:var(--orange);">
-        <p style="font-size:13px;margin:0 0 8px;color:var(--orange);font-weight:600;">Firestore antwoordt niet</p>
+      <div class="cart-item" style="border-color:var(--accent);">
+        <p style="font-size:13px;margin:0 0 8px;color:var(--accent);font-weight:600;">Firestore antwoordt niet</p>
         <p class="muted" style="font-size:13px;margin:0 0 8px;">
           De database is waarschijnlijk nog niet aangemaakt. Firestore meldt dat niet als fout,
           maar blijft het stilletjes opnieuw proberen — daarom bleef dit vak leeg.
@@ -1172,7 +1450,7 @@ function emptyCollectionNotice(){
           <strong>Create database</strong>, kies locatie <strong>europe-west1</strong> en
           <strong>Start in test mode</strong>. Herlaad daarna deze pagina.
         </p>
-        <a class="btn btn-orange" style="display:inline-block;text-decoration:none;"
+        <a class="btn btn-accent" style="display:inline-block;text-decoration:none;"
            href="${esc(FIRESTORE_CONSOLE_URL)}" target="_blank" rel="noopener">Firestore openen</a>
       </div>`;
   }
@@ -1182,8 +1460,8 @@ function emptyCollectionNotice(){
   const err = state.productsError || state.seedError;
   if (err){
     return `
-      <div class="cart-item" style="border-color:var(--orange);">
-        <p style="font-size:13px;margin:0 0 8px;color:var(--orange);font-weight:600;">De collectie kan niet geladen worden</p>
+      <div class="cart-item" style="border-color:var(--accent);">
+        <p style="font-size:13px;margin:0 0 8px;color:var(--accent);font-weight:600;">De collectie kan niet geladen worden</p>
         <p class="muted" style="font-size:13px;margin:0 0 8px;">${esc(firestoreHint(err))}</p>
         <p class="muted font-mono" style="font-size:11px;margin:0;">${esc(err.code || err.message || String(err))}</p>
       </div>`;
@@ -1192,7 +1470,7 @@ function emptyCollectionNotice(){
     <div class="cart-item">
       <p style="font-size:13px;margin:0 0 8px;">Er staan nog geen producten in de collectie.</p>
       <p class="muted" style="font-size:13px;margin:0 0 12px;">De drie voorbeeldproducten worden normaal automatisch toegevoegd. Zijn ze verwijderd, of ging dat de eerste keer mis, dan kun je ze hier opnieuw plaatsen.</p>
-      <button class="btn btn-orange" id="reseedBtn">Voorbeeldproducten toevoegen</button>
+      <button class="btn btn-accent" id="reseedBtn">Voorbeeldproducten toevoegen</button>
     </div>`;
 }
 window.__reseed = async (btn) => {
@@ -1349,7 +1627,7 @@ function filamentPicker(p){
           <button class="swatch ${finishClass(f.finish)} ${f.id===chosen.id?'active':''}"
                   data-fil="${esc(f.id)}" title="${esc(f.name)} — ${esc(f.hex)}"
                   style="background-color:${esc(f.hex)};">
-            ${f.id===chosen.id ? `<span class="tick" style="color:${esc(readableOn(f.hex))}">✓</span>` : ``}
+            ${f.id===chosen.id ? `<span class="tick" style="color:${esc(readableOn(f.hex))}"><i class="fa-solid fa-check" aria-hidden="true"></i></span>` : ``}
           </button>`).join("")}
       </div>
       <div class="fil-chosen">
@@ -1376,9 +1654,9 @@ function viewProduct(){
   const showingPreview = preview && active === 0;
   const main = all.length
     ? `<img id="galleryMain" src="${esc(all[active])}" alt="${esc(p.name)}" />`
-    : `<span>${esc(p.icon || "📦")}</span>`;
+    : `<span><i class="fa-solid fa-cube" aria-hidden="true"></i></span>`;
   const strip = all.length > 1 ? `
-    <div class="gallery-strip">
+    <div class="strip">
       ${all.map((src,i)=>`<button class="${i===active?'active':''}" data-img="${i}"><img src="${esc(src)}" alt="${i===0&&preview?'Kleurvoorbeeld':'Afbeelding '+i}" /></button>`).join("")}
     </div>` : ``;
 
@@ -1398,34 +1676,34 @@ function viewProduct(){
   const inStock = sizing ? true : (p.stock ?? 0) > 0;   // op maat wordt altijd geprint
   return `
     <div style="padding:32px 0;">
-      <button class="back" onclick="go('shop')">← Terug naar collectie</button>
+      <button class="back" onclick="go('shop')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Terug naar collectie</button>
       <div class="product-layout">
         <div>
-          <div class="gallery-main rel">
+          <div class="viewer rel">
             ${main}
-            ${showingPreview ? `<span class="preview-note">KLEURVOORBEELD · ${esc(chosen.name.toUpperCase())}</span>` : ``}
+            ${showingPreview ? `<span class="viewer-tag">KLEURVOORBEELD · ${esc(chosen.name.toUpperCase())}</span>` : ``}
           </div>
           ${strip}
         </div>
         <div>
-          ${p.category ? `<span class="cat-badge">${esc(p.category)}</span>` : ``}
+          ${p.category ? `<span class="badge badge-accent">${esc(p.category)}</span>` : ``}
           <h1 class="font-display" style="font-size:24px;margin:0 0 10px;">${esc(p.name)}</h1>
           <p class="price" style="font-size:26px;margin:0 0 4px;">${fmtEUR(productPrice(p))}</p>
           <p style="font-size:12px;margin:0 0 16px;" class="muted">
             ${sizing
-              ? `<span class="stock-dot" style="background:var(--teal)"></span>Op maat geprint`
-              : `<span class="stock-dot" style="background:${inStock ? 'var(--teal)' : 'var(--muted)'}"></span>${inStock ? esc(p.stock) + " op voorraad" : "Niet op voorraad"}`}
+              ? `<span class="stock-dot" style="background:var(--accent)"></span>Op maat geprint`
+              : `<span class="stock-dot" style="background:${inStock ? 'var(--accent)' : 'var(--muted)'}"></span>${inStock ? esc(p.stock) + " op voorraad" : "Niet op voorraad"}`}
           </p>
-          ${p.description ? `<p style="font-size:14px;line-height:1.6;color:var(--text);opacity:.85;">${esc(p.description)}</p>` : ``}
+          ${p.description ? `<p style="font-size:14px;line-height:1.6;color:var(--ink);opacity:.85;">${esc(p.description)}</p>` : ``}
           ${sizing ? sizingBlock(p) : ``}
           ${filamentPicker(p)}
           ${est ? priceBreakdown(est) : ``}
           ${specs ? `<div class="spec-grid">${specs}</div>` : ``}
           <div class="row" style="margin-top:18px;">
-            <div class="stepper"><button id="qMinus">−</button><span id="qVal">1</span><button id="qPlus">+</button></div>
-            <button class="btn btn-orange" id="addBtn" ${inStock ? "" : "disabled style=\"opacity:.5;\""}>🛒 Toevoegen</button>
+            <div class="stepper"><button id="qMinus"><i class="fa-solid fa-minus" aria-hidden="true"></i></button><span id="qVal">1</span><button id="qPlus"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div>
+            <button class="btn btn-accent" id="addBtn" ${inStock ? "" : "disabled style=\"opacity:.5;\""}><i class="fa-solid fa-cart-plus" aria-hidden="true"></i> Toevoegen</button>
           </div>
-          <p class="footer-note">🖨 Wordt op bestelling geprint — verzending binnen 3 tot 5 werkdagen.</p>
+          <p class="footer-note"><i class="fa-solid fa-print" aria-hidden="true"></i> Wordt op bestelling geprint — verzending binnen 3 tot 5 werkdagen.</p>
         </div>
       </div>
     </div>`;
@@ -1562,7 +1840,7 @@ function viewCustom(){
 
   return `
     <div style="padding:32px 0;">
-      <button class="back" onclick="go('shop')">← Terug naar collectie</button>
+      <button class="back" onclick="go('shop')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Terug naar collectie</button>
       <h1 class="font-display" style="font-size:26px;margin:0 0 6px;">Jouw model laten printen</h1>
       <p class="muted" style="font-size:14px;margin:0 0 24px;max-width:60ch;">
         Upload één of meerdere STL-bestanden. Geef elk onderdeel een naam, kies het filament
@@ -1571,8 +1849,8 @@ function viewCustom(){
 
       <div class="job-layout">
         <div>
-          <label class="upload-box" for="fileInput">
-            <span style="font-size:26px;">⬆</span>
+          <label class="dropzone" for="fileInput">
+            <i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true"></i>
             <span id="fileLabel" style="font-size:15px;">
               ${parts.length ? "Nog een bestand toevoegen" : "Kies je .stl-bestanden"}
             </span>
@@ -1593,7 +1871,7 @@ function viewCustom(){
             </div>`}
         </div>
 
-        ${parts.length ? `<aside class="job-summary">${projectSummary(t, canAssemble)}</aside>` : ``}
+        ${parts.length ? `<aside class="job-summary panel">${projectSummary(t, canAssemble)}</aside>` : ``}
       </div>
     </div>`;
 }
@@ -1612,21 +1890,26 @@ function partCard(p){
     <div class="part-card" data-part="${esc(p.id)}">
       <div class="between" style="margin-bottom:12px;gap:12px;">
         <input class="part-name" data-field="name" value="${esc(p.name)}" placeholder="Naam van dit onderdeel" />
-        <button class="navbtn" data-remove="${esc(p.id)}" title="Verwijderen">🗑</button>
+        <button class="btn btn-ghost btn-sm" data-remove="${esc(p.id)}" title="Verwijderen"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
       </div>
       <p class="muted font-mono" style="font-size:10px;margin:-6px 0 12px;">${esc(p.fileName)}</p>
 
       ${p.busy ? `<p class="muted" style="font-size:13px;">Model analyseren…</p>` : ``}
       ${p.error ? `
-        <div class="cart-item" style="border-color:var(--orange);margin-bottom:12px;">
-          <p style="font-size:13px;margin:0;color:var(--orange);">${esc(p.error)}</p>
+        <div class="cart-item" style="border-color:var(--accent);margin-bottom:12px;">
+          <p style="font-size:13px;margin:0;color:var(--accent);">${esc(p.error)}</p>
         </div>` : ``}
 
       ${p.geo ? `
         <div class="part-body">
           <div>
-            ${platePreview(size)}
-            ${!fits ? `<p style="font-size:12px;color:var(--orange);margin:8px 0 0;">
+            <div class="viewer rel" style="aspect-ratio:1/1;">
+              <canvas class="mesh3d" data-mesh="${esc(p.id)}"></canvas>
+              <span class="viewer-tag">3D &middot; ${esc(fil?.name || "")}</span>
+              <span class="viewer-hint">sleep om te draaien</span>
+            </div>
+            <div style="margin-top:10px;">${platePreview(size)}</div>
+            ${!fits ? `<p style="font-size:12px;color:var(--accent);margin:8px 0 0;">
               Dit onderdeel past niet op de plaat. Verklein het of splits het op.
             </p>` : ``}
           </div>
@@ -1711,7 +1994,7 @@ function projectSummary(t, canAssemble){
       ${canAssemble ? `
         <label class="checkbox-row" style="margin:14px 0 4px;align-items:flex-start;">
           <input type="checkbox" id="assembleBox" style="width:auto;margin:3px 0 0;" ${state.assembled ? 'checked' : ''} />
-          <span style="color:var(--text);">
+          <span style="color:var(--ink);">
             Geassembleerd leveren
             <span class="muted" style="display:block;font-size:11px;">
               Wij zetten de onderdelen in elkaar. Zonder deze optie krijg je ze los.
@@ -1722,10 +2005,10 @@ function projectSummary(t, canAssemble){
 
       <div style="border-top:1px solid var(--line);margin:14px 0 10px;"></div>
       <div class="kv"><span>Onderdelen</span><span class="font-mono">${fmtEUR(t.subtotal)}</span></div>
-      ${t.pct ? `<div class="kv"><span>Hoeveelheidskorting ${t.pct}%</span><span class="font-mono" style="color:var(--teal);">−${fmtEUR(t.discount)}</span></div>` : ``}
+      ${t.pct ? `<div class="kv"><span>Hoeveelheidskorting ${t.pct}%</span><span class="font-mono" style="color:var(--accent);">&minus;${fmtEUR(t.discount)}</span></div>` : ``}
       ${t.assembly ? `<div class="kv"><span>Assembleren</span><span class="font-mono">${fmtEUR(t.assembly)}</span></div>` : ``}
       <div class="kv" style="border-top:1px solid var(--line);margin-top:8px;padding-top:10px;font-size:14px;">
-        <span style="color:var(--text);font-weight:600;">Totaal</span>
+        <span style="color:var(--ink);font-weight:600;">Totaal</span>
         <span class="price" style="font-size:20px;">${fmtEUR(t.total)}</span>
       </div>
 
@@ -1736,17 +2019,48 @@ function projectSummary(t, canAssemble){
 
       <textarea id="projectNotes" rows="3" style="margin-top:14px;" placeholder="Opmerkingen bij deze opdracht (afwerking, kleurwissel, hoe het in elkaar hoort...)">${esc(state.projectNotes || "")}</textarea>
 
-      <button class="btn btn-orange" id="addJobBtn" style="width:100%;"
+      <button class="btn btn-accent" id="addJobBtn" style="width:100%;"
               ${t.parts === 0 || t.pending ? 'disabled style="width:100%;opacity:.5;"' : ''}>
-        🛒 ${t.pending ? "Bezig met analyseren…" : "Toevoegen aan winkelwagen"}
+        ${t.pending ? `<i class="fa-solid fa-spinner" aria-hidden="true"></i> Bezig met analyseren…` : `<i class="fa-solid fa-cart-plus" aria-hidden="true"></i> Toevoegen aan winkelwagen`}
       </button>
-      ${t.failed ? `<p class="muted" style="font-size:11px;margin:8px 0 0;color:var(--orange);">
+      ${t.failed ? `<p class="muted" style="font-size:11px;margin:8px 0 0;color:var(--accent);">
         ${t.failed} bestand${t.failed > 1 ? 'en' : ''} kon niet gelezen worden en telt niet mee.
       </p>` : ``}
     </div>`;
 }
 
+/* Hangt de 3D-weergaven aan hun canvas en maakt ze draaibaar met de muis of
+   een vinger. De hoek wordt per onderdeel onthouden. */
+function attachMeshViewers(){
+  document.querySelectorAll('.mesh3d').forEach(cv=>{
+    const part = (state.parts || []).find(p => p.id === cv.dataset.mesh);
+    if (!part || !part.geo) return;
+    const fil = partFilament(part);
+    if (!part.view) part.view = { yaw: 0.7, pitch: 0.45 };
+
+    const paint = () => drawMesh(cv, part.geo, {
+      hex: fil?.hex || "#B8BCC2", finish: fil?.finish || "basic",
+      yaw: part.view.yaw, pitch: part.view.pitch,
+    });
+    paint();
+    // na het laden van het lettertype of een resize klopt de maat pas echt
+    requestAnimationFrame(paint);
+
+    let dragging = false, lx = 0, ly = 0;
+    cv.onpointerdown = (e) => { dragging = true; lx = e.clientX; ly = e.clientY; cv.setPointerCapture(e.pointerId); };
+    cv.onpointermove = (e) => {
+      if (!dragging) return;
+      part.view.yaw += (e.clientX - lx) * 0.011;
+      part.view.pitch = Math.max(-1.3, Math.min(1.4, part.view.pitch + (e.clientY - ly) * 0.009));
+      lx = e.clientX; ly = e.clientY;
+      paint();
+    };
+    cv.onpointerup = cv.onpointercancel = () => { dragging = false; };
+  });
+}
+
 function attachCustomHandlers(){
+  attachMeshViewers();
   const input = document.getElementById('fileInput');
   if (input) input.onchange = async (e) => {
     const files = Array.from(e.target.files || []);
@@ -1899,7 +2213,7 @@ async function addJobToCart(btn){
     }
     notify("Uploaden mislukt: " + msg);
     btn.disabled = false;
-    btn.textContent = "🛒 Toevoegen aan winkelwagen";
+    btn.innerHTML = '<i class="fa-solid fa-cart-plus" aria-hidden="true"></i> Toevoegen aan winkelwagen';
   }
 }
 
@@ -1912,14 +2226,14 @@ function cartShape(it){
 
 function viewCart(){
   if (state.cart.length===0){
-    return `<div style="padding:32px 0;"><button class="back" onclick="go('shop')">← Verder winkelen</button><h1 class="font-display" style="font-size:22px;">Winkelwagen</h1><p class="muted">Je winkelwagen is leeg.</p></div>`;
+    return `<div style="padding:32px 0;"><button class="back" onclick="go('shop')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Verder winkelen</button><h1 class="font-display" style="font-size:22px;">Winkelwagen</h1><p class="muted">Je winkelwagen is leeg.</p></div>`;
   }
   const items = state.cart.map(it=>`
     <div class="cart-item row between" style="margin-bottom:10px;">
       <div class="row" style="flex:1;">
         <div class="admin-thumb">${
           it.kind==='custom'
-            ? '📄'
+            ? `<i class="fa-solid fa-file-lines" aria-hidden="true"></i>`
             : it.filament
               ? `<img src="${esc(filamentPreview(cartShape(it), it.filament.hex, it.filament.finish))}" alt="" />`
               : productThumb(state.products.find(x=>x.id===(it.productId||it.id)) || {}, 18)
@@ -1941,19 +2255,19 @@ function viewCart(){
         </div>
       </div>
       <div class="stepper">
-        <button onclick="window.__setQty('${it.id}','${it.kind}',${it.qty-1})">−</button>
+        <button onclick="window.__setQty('${it.id}','${it.kind}',${it.qty-1})"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
         <span>${it.qty}</span>
-        <button onclick="window.__setQty('${it.id}','${it.kind}',${it.qty+1})">+</button>
+        <button onclick="window.__setQty('${it.id}','${it.kind}',${it.qty+1})"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
       </div>
-      <button class="navbtn" onclick="window.__removeFromCart('${it.id}','${it.kind}')">🗑</button>
+      <button class="btn btn-ghost btn-sm" onclick="window.__removeFromCart('${it.id}','${it.kind}')"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
     </div>`).join("");
   return `
     <div style="padding:32px 0;max-width:480px;">
-      <button class="back" onclick="go('shop')">← Verder winkelen</button>
+      <button class="back" onclick="go('shop')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Verder winkelen</button>
       <h1 class="font-display" style="font-size:22px;margin-bottom:16px;">Winkelwagen</h1>
       ${items}
       <div class="between font-mono" style="margin:16px 0;"><span class="muted">Subtotaal</span><span>${fmtEUR(cartTotal())}</span></div>
-      <button class="btn btn-orange" style="width:100%;" onclick="go(${state.user ? "'checkout'" : "'login'"})">Afrekenen</button>
+      <button class="btn btn-accent" style="width:100%;" onclick="go(${state.user ? "'checkout'" : "'login'"})">Afrekenen</button>
     </div>`;
 }
 
@@ -1962,7 +2276,7 @@ function viewCheckout(){
   const options = SHIPPING_RATES.map(r=>`<option value="${r.country}">${r.country} — ${fmtEUR(r.price)}</option>`).join("");
   return `
     <div style="padding:32px 0;max-width:480px;">
-      <button class="back" onclick="go('cart')">← Terug naar winkelwagen</button>
+      <button class="back" onclick="go('cart')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Terug naar winkelwagen</button>
       <h1 class="font-display" style="font-size:22px;margin-bottom:16px;">Afrekenen</h1>
       <input id="ckStreet" placeholder="Straat + nr" value="${esc(addr.street||'')}" />
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
@@ -1974,10 +2288,10 @@ function viewCheckout(){
       <div class="cart-item font-mono" style="font-size:13px;margin:16px 0;">
         <div class="between"><span class="muted">Subtotaal</span><span>${fmtEUR(cartTotal())}</span></div>
         <div class="between"><span class="muted">Verzending</span><span id="ckShipVal">${fmtEUR(SHIPPING_RATES[0].price)}</span></div>
-        <div class="between" style="border-top:1px solid var(--surface2);margin-top:6px;padding-top:6px;color:var(--teal);"><span>Totaal</span><span id="ckTotalVal">${fmtEUR(cartTotal()+SHIPPING_RATES[0].price)}</span></div>
+        <div class="between" style="border-top:1px solid var(--surface2);margin-top:6px;padding-top:6px;color:var(--accent);"><span>Totaal</span><span id="ckTotalVal">${fmtEUR(cartTotal()+SHIPPING_RATES[0].price)}</span></div>
       </div>
-      <button class="btn btn-orange" style="width:100%;" id="placeOrderBtn">Naar betaling →</button>
-      <p class="footer-note">⚠ Demo-omgeving: er wordt geen echte betaling verwerkt.</p>
+      <button class="btn btn-accent" style="width:100%;" id="placeOrderBtn">Naar betaling <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button>
+      <p class="footer-note"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> Demo-omgeving: er wordt geen echte betaling verwerkt.</p>
     </div>`;
 }
 function attachCheckoutHandlers(){
@@ -2001,13 +2315,13 @@ function attachCheckoutHandlers(){
 function viewPayment(){
   const ck = state.__checkout;
   if (!ck || state.cart.length === 0){
-    return `<div style="padding:32px 0;"><p class="muted">Geen bestelling in behandeling.</p><button class="navbtn" onclick="go('cart')">← Naar winkelwagen</button></div>`;
+    return `<div style="padding:32px 0;"><p class="muted">Geen bestelling in behandeling.</p><button class="btn btn-ghost btn-sm" onclick="go('cart')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Naar winkelwagen</button></div>`;
   }
   const rate = SHIPPING_RATES.find(r=>r.country===ck.country) || SHIPPING_RATES[0];
   const total = cartTotal() + rate.price;
   return `
     <div style="padding:32px 0;max-width:480px;">
-      <button class="back" onclick="go('checkout')">← Terug naar gegevens</button>
+      <button class="back" onclick="go('checkout')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Terug naar gegevens</button>
       <h1 class="font-display" style="font-size:22px;margin-bottom:6px;">Betalen</h1>
       <div class="demo-banner">
         <strong>Testmodus — je betaalt met nepgeld.</strong><br />
@@ -2017,7 +2331,7 @@ function viewPayment(){
       <div class="pay-card">
         <div class="between">
           <span class="font-mono muted" style="font-size:11px;">TESTKAART</span>
-          <span class="font-display" style="font-size:13px;color:var(--orange);">DEMO</span>
+          <span class="font-display" style="font-size:13px;color:var(--accent);">DEMO</span>
         </div>
         <div class="pay-strip">4242 4242 4242 4242</div>
         <div class="between font-mono muted" style="font-size:11px;">
@@ -2037,11 +2351,11 @@ function viewPayment(){
       <div class="cart-item font-mono" style="font-size:13px;margin:16px 0;">
         <div class="between"><span class="muted">Subtotaal</span><span>${fmtEUR(cartTotal())}</span></div>
         <div class="between"><span class="muted">Verzending naar ${esc(ck.country)}</span><span>${fmtEUR(rate.price)}</span></div>
-        <div class="between" style="border-top:1px solid var(--surface2);margin-top:6px;padding-top:6px;color:var(--teal);"><span>Te betalen</span><span>${fmtEUR(total)}</span></div>
+        <div class="between" style="border-top:1px solid var(--surface2);margin-top:6px;padding-top:6px;color:var(--accent);"><span>Te betalen</span><span>${fmtEUR(total)}</span></div>
       </div>
 
-      <button class="btn btn-orange" style="width:100%;" id="payBtn">💳 Betaal ${fmtEUR(total)} met testgeld</button>
-      <p class="footer-note">🔒 Zodra je echt wilt verkopen, vervangen we deze stap door een echte betaalprovider.</p>
+      <button class="btn btn-accent" style="width:100%;" id="payBtn"><i class="fa-solid fa-credit-card" aria-hidden="true"></i> Betaal ${fmtEUR(total)} met testgeld</button>
+      <p class="footer-note"><i class="fa-solid fa-lock" aria-hidden="true"></i> Zodra je echt wilt verkopen, vervangen we deze stap door een echte betaalprovider.</p>
     </div>`;
 }
 function attachPaymentHandlers(){
@@ -2076,8 +2390,8 @@ function viewAuth(mode){
           <input id="regZip" placeholder="Postcode" />
           <input id="regCity" placeholder="Gemeente" />
         </div>` : ``}
-      <button class="btn btn-orange" style="width:100%;margin-top:6px;" id="authSubmit">${mode==='login'?'Inloggen':'Account aanmaken'}</button>
-      <button class="navbtn" style="width:100%;margin-top:12px;background:none;border:none;color:var(--teal);justify-content:center;" id="authSwitch">
+      <button class="btn btn-accent" style="width:100%;margin-top:6px;" id="authSubmit">${mode==='login'?'Inloggen':'Account aanmaken'}</button>
+      <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:12px;background:none;border:none;color:var(--accent);justify-content:center;" id="authSwitch">
         ${mode==='login' ? 'Nog geen account? Registreer' : 'Al een account? Log in'}
       </button>
     </div>`;
@@ -2130,10 +2444,10 @@ function orderTracker(o){
     </div>`).join("")}</div>`;
 }
 function etaLine(o){
-  if (o.status === "Geleverd") return `<div class="eta">📦 <strong>Geleverd.</strong> Bedankt voor je bestelling!</div>`;
+  if (o.status === "Geleverd") return `<div class="eta"><i class="fa-solid fa-box-open" aria-hidden="true"></i> <strong>Geleverd.</strong> Bedankt voor je bestelling!</div>`;
   const w = deliveryWindow(o);
   const verb = o.status === "Verzonden" ? "Onderweg — verwacht" : "Verwachte levering";
-  return `<div class="eta">🚚 ${verb} tussen <strong>${esc(fmtDate(w.from))}</strong> en <strong>${esc(fmtDate(w.to))}</strong></div>`;
+  return `<div class="eta"><i class="fa-solid fa-truck" aria-hidden="true"></i> ${verb} tussen <strong>${esc(fmtDate(w.from))}</strong> en <strong>${esc(fmtDate(w.to))}</strong></div>`;
 }
 window.__toggleOrder = (id) => {
   state.__openOrder = state.__openOrder === id ? null : id;
@@ -2145,7 +2459,7 @@ function orderCard(o){
   const lines = o.items.map(i=>`
     <div class="order-line">
       <div class="admin-thumb">${
-        i.kind === 'custom' ? '📄'
+        i.kind === 'custom' ? `<i class="fa-solid fa-file-lines" aria-hidden="true"></i>`
         : i.filament ? `<img src="${esc(filamentPreview(cartShape(i), i.filament.hex, i.filament.finish))}" alt="" />`
         : productThumb(state.products.find(p=>p.id===(i.productId||i.id)) || {}, 18) }</div>
       <div style="flex:1;min-width:0;">
@@ -2176,9 +2490,9 @@ function orderCard(o){
       ${etaLine(o)}
       ${lines}
       <div class="kv" style="border-top:1px solid var(--surface2);margin-top:8px;padding-top:8px;">
-        <span>Totaal</span><span class="font-mono" style="color:var(--teal);font-weight:600;">${fmtEUR(o.total)}</span>
+        <span>Totaal</span><span class="font-mono" style="color:var(--accent);font-weight:600;">${fmtEUR(o.total)}</span>
       </div>
-      <button class="detail-toggle" onclick="window.__toggleOrder('${o.id}')">${open ? "▴ Minder details" : "▾ Meer details"}</button>
+      <button class="detail-toggle" onclick="window.__toggleOrder('${o.id}')">${open ? `${ic("chevron-up")} Minder details` : `${ic("chevron-down")} Meer details`}</button>
       ${open ? `
         <div style="margin-top:10px;">
           <div class="kv"><span>Subtotaal</span><span class="font-mono">${fmtEUR(o.subtotal ?? 0)}</span></div>
@@ -2192,7 +2506,7 @@ function orderCard(o){
 
 function viewAccount(){
   if (!state.user){
-    return `<div style="padding:32px 0;"><p class="muted">Je bent niet ingelogd.</p><button class="btn btn-orange" onclick="go('login')">Inloggen</button></div>`;
+    return `<div style="padding:32px 0;"><p class="muted">Je bent niet ingelogd.</p><button class="btn btn-accent" onclick="go('login')">Inloggen</button></div>`;
   }
   const a = state.profile?.address || {};
   const naam = state.profile?.name || (state.user.email || "").split("@")[0];
@@ -2202,12 +2516,12 @@ function viewAccount(){
     <div style="padding:32px 0;max-width:520px;">
       <h1 class="font-display" style="font-size:22px;margin-bottom:2px;">Hallo, ${esc(naam)}</h1>
       <p class="muted" style="font-size:13px;margin:0 0 4px;">${esc(state.user.email || '')}</p>
-      ${state.profile?.isAdmin ? `<span class="cat-badge">Beheerder</span>` : ``}
+      ${state.profile?.isAdmin ? `<span class="badge badge-accent">Beheerder</span>` : ``}
       ${a.street ? `<p class="muted" style="font-size:12px;margin:8px 0 0;">${esc(a.street)}, ${esc(a.zip||'')} ${esc(a.city||'')}</p>` : ``}
-      ${state.profileError ? `<p class="muted" style="font-size:12px;margin-top:8px;color:var(--orange);">Je profielgegevens konden niet geladen worden — je blijft wel ingelogd.</p>` : ``}
+      ${state.profileError ? `<p class="muted" style="font-size:12px;margin-top:8px;color:var(--accent);">Je profielgegevens konden niet geladen worden — je blijft wel ingelogd.</p>` : ``}
       ${state.ordersError ? `
-        <div class="cart-item" style="border-color:var(--orange);margin-top:14px;">
-          <p style="font-size:13px;margin:0 0 6px;color:var(--orange);font-weight:600;">Je bestellingen konden niet geladen worden</p>
+        <div class="cart-item" style="border-color:var(--accent);margin-top:14px;">
+          <p style="font-size:13px;margin:0 0 6px;color:var(--accent);font-weight:600;">Je bestellingen konden niet geladen worden</p>
           <p class="muted" style="font-size:13px;margin:0 0 6px;">${esc(firestoreHint(state.ordersError))}</p>
           <p class="muted font-mono" style="font-size:11px;margin:0;">${esc(state.ordersError.code || state.ordersError.message || '')}</p>
         </div>` : ``}
@@ -2222,8 +2536,8 @@ function viewAccount(){
         ${afgerond.map(orderCard).join("")}` : ``}
 
       <div class="row" style="margin-top:20px;">
-        <button class="navbtn" onclick="go('shop')">← Terug naar de shop</button>
-        <button class="navbtn" onclick="window.__logout()">Uitloggen</button>
+        <button class="btn btn-ghost btn-sm" onclick="go('shop')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Terug naar de shop</button>
+        <button class="btn btn-ghost btn-sm" onclick="window.__logout()">Uitloggen</button>
       </div>
     </div>`;
 }
@@ -2232,7 +2546,7 @@ function viewAdmin(){
   const tab = state.__adminTab || "products";
   const ed = state.__editing ? state.products.find(p => p.id === state.__editing) : null;
   const productRows = state.products.map(p=>`
-    <div class="admin-row between" style="margin-bottom:8px;${p.id===state.__editing?'border-color:var(--teal);':''}">
+    <div class="admin-row between" style="margin-bottom:8px;${p.id===state.__editing?'border-color:var(--accent);':''}">
       <div class="row" style="flex:1;min-width:0;">
         <div class="admin-thumb">${productThumb(p, 18)}</div>
         <div style="min-width:0;">
@@ -2241,8 +2555,8 @@ function viewAdmin(){
         </div>
       </div>
       <div class="row" style="flex-shrink:0;gap:6px;">
-        <button class="navbtn" onclick="window.__editProduct('${p.id}')" title="Bewerken">✎</button>
-        <button class="navbtn" onclick="window.__deleteProduct('${p.id}')" title="Verwijderen">🗑</button>
+        <button class="btn btn-ghost btn-sm" onclick="window.__editProduct('${p.id}')" title="Bewerken"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+        <button class="btn btn-ghost btn-sm" onclick="window.__deleteProduct('${p.id}')" title="Verwijderen"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
       </div>
     </div>`).join("");
   const orderRows = state.orders.map(o=>`
@@ -2269,13 +2583,13 @@ function viewAdmin(){
           </div>` : ``}`).join("")}
       <div class="between font-mono" style="font-size:11px;">
         <span class="muted">${esc(o.shippingAddress?.street||'')}, ${esc(o.shippingAddress?.zip||'')} ${esc(o.shippingAddress?.city||'')}, ${esc(o.shippingCountry||'')}</span>
-        <span style="color:var(--teal);">${fmtEUR(o.total)}</span>
+        <span style="color:var(--accent);">${fmtEUR(o.total)}</span>
       </div>
       ${o.paymentMethod ? `<div class="muted font-mono" style="font-size:10px;margin-top:4px;">${esc(o.paymentMethod)}${o.paymentRef ? " · " + esc(o.paymentRef) : ""}${o.demoPayment ? " · TESTGELD" : ""}</div>` : ``}
     </div>`).join("");
   return `
     <div style="padding:32px 0;">
-      <h1 class="font-display" style="font-size:22px;">⚙ Shopbeheer</h1>
+      <h1 class="font-display" style="font-size:26px;">Shopbeheer</h1>
       <p class="muted" style="font-size:13px;margin-bottom:20px;">Voeg producten toe en beheer bestellingen — live gedeeld met iedereen.</p>
       <div class="tabs">
         <button class="tab ${tab==='products'?'active':''}" onclick="window.__setAdminTab('products')">Producten</button>
@@ -2289,8 +2603,8 @@ function viewAdmin(){
         <div class="admin-split">
           <div>
             <div class="between" style="margin-bottom:10px;">
-              <h2 class="font-display" style="font-size:15px;margin:0;">${ed ? "✎ Product bewerken" : "+ Nieuw product"}</h2>
-              ${ed ? `<button class="navbtn" onclick="window.__cancelEdit()">Annuleren</button>` : ``}
+              <h2 class="font-display" style="font-size:15px;margin:0;">${ed ? "Product bewerken" : "Nieuw product"}</h2>
+              ${ed ? `<button class="btn btn-ghost btn-sm" onclick="window.__cancelEdit()">Annuleren</button>` : ``}
             </div>
 
             <label class="field-label">Afbeeldingen (max ${MAX_PRODUCT_IMAGES})</label>
@@ -2298,7 +2612,7 @@ function viewAdmin(){
             <input type="file" id="pImgFile" accept="image/*" multiple style="display:none;" />
             <div class="row" style="margin-bottom:12px;">
               <input id="pImgUrl" placeholder="…of plak een afbeeldings-URL (https://)" style="margin:0;" />
-              <button class="navbtn" id="addImgUrlBtn" style="flex-shrink:0;">Toevoegen</button>
+              <button class="btn btn-ghost btn-sm" id="addImgUrlBtn" style="flex-shrink:0;">Toevoegen</button>
             </div>
 
             <label class="field-label">Naam</label>
@@ -2394,7 +2708,7 @@ function viewAdmin(){
 
             <label class="checkbox-row"><input type="checkbox" id="pFeatured" style="width:auto;margin:0;" ${ed?.featured ? 'checked' : ''} /> Uitlichten in de collectie</label>
 
-            <button class="btn btn-orange" id="addProductBtn" style="width:100%;">${ed ? "Wijzigingen opslaan" : "Product toevoegen"}</button>
+            <button class="btn btn-accent" id="addProductBtn" style="width:100%;">${ed ? "Wijzigingen opslaan" : "Product toevoegen"}</button>
           </div>
           <div>
             <h2 class="font-display" style="font-size:15px;margin-bottom:10px;">Huidige producten (${state.products.length})</h2>
@@ -2413,7 +2727,7 @@ function viewFilamentAdmin(){
   if (!items.length){
     return `
       <p class="muted" style="font-size:13px;margin-bottom:12px;">De filamentcatalogus is nog niet geladen.</p>
-      <button class="btn btn-orange" id="resetFilamentsBtn">Bambu Lab-catalogus laden</button>`;
+      <button class="btn btn-accent" id="resetFilamentsBtn">Bambu Lab-catalogus laden</button>`;
   }
   const types = filamentTypes(items);
   const blocks = types.map(type => {
@@ -2426,7 +2740,7 @@ function viewFilamentAdmin(){
             <div class="font-display" style="font-size:14px;">${esc(type)}</div>
             <div class="muted font-mono" style="font-size:10px;">${aan} van ${rows.length} aan · ${esc(FILAMENT_FINISHES[rows[0].finish] || rows[0].finish)}</div>
           </div>
-          <button class="navbtn" data-filtypetoggle="${esc(type)}" data-target="${aan === rows.length ? 'off' : 'on'}">
+          <button class="btn btn-ghost btn-sm" data-filtypetoggle="${esc(type)}" data-target="${aan === rows.length ? 'off' : 'on'}">
             ${aan === rows.length ? "Alles uit" : "Alles aan"}
           </button>
         </div>
@@ -2444,7 +2758,7 @@ function viewFilamentAdmin(){
               <div class="muted font-mono" style="font-size:10px;">${esc(f.hex.toUpperCase())}</div>
             </div>
             <button class="toggle ${f.enabled?'on':''}" data-filtoggle="${esc(f.id)}" title="${f.enabled?'Uitzetten':'Aanzetten'}"></button>
-            ${f.custom ? `<button class="navbtn" data-fildelete="${esc(f.id)}" title="Verwijderen">🗑</button>` : ``}
+            ${f.custom ? `<button class="btn btn-ghost btn-sm" data-fildelete="${esc(f.id)}" title="Verwijderen"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>` : ``}
           </div>`).join("")}
       </div>`;
   }).join("");
@@ -2467,7 +2781,7 @@ function viewFilamentAdmin(){
           </select>
         </div>
       </div>
-      <button class="btn btn-orange" id="addFilamentBtn" style="width:100%;">Filament toevoegen</button>
+      <button class="btn btn-accent" id="addFilamentBtn" style="width:100%;">Filament toevoegen</button>
     </div>`;
 }
 
@@ -2579,8 +2893,8 @@ function viewPricingAdmin(){
         </div>`).join("")}
     </div>
 
-    <button class="btn btn-orange" id="savePricingBtn" style="width:100%;">Prijzen opslaan</button>
-    <button class="navbtn" id="resetPricingBtn" style="width:100%;margin-top:8px;justify-content:center;">Terug naar de standaardwaarden</button>`;
+    <button class="btn btn-accent" id="savePricingBtn" style="width:100%;">Prijzen opslaan</button>
+    <button class="btn btn-ghost btn-sm" id="resetPricingBtn" style="width:100%;margin-top:8px;justify-content:center;">Terug naar de standaardwaarden</button>`;
 }
 
 function attachPricingHandlers(){
@@ -2635,9 +2949,9 @@ function renderImageTray(){
   tray.innerHTML = imgs.map((src,i)=>`
     <div class="img-slot">
       <img src="${esc(src)}" alt="Afbeelding ${i+1}" />
-      <button onclick="window.__removeDraftImage(${i})" title="Verwijderen">×</button>
+      <button onclick="window.__removeDraftImage(${i})" title="Verwijderen"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
     </div>`).join("")
-    + (imgs.length < MAX_PRODUCT_IMAGES ? `<button class="img-add" id="pickImgBtn" title="Afbeelding kiezen">+</button>` : ``);
+    + (imgs.length < MAX_PRODUCT_IMAGES ? `<button class="img-add" id="pickImgBtn" title="Afbeelding kiezen"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>` : ``);
   const pick = document.getElementById('pickImgBtn');
   if (pick) pick.onclick = () => document.getElementById('pImgFile').click();
 }
@@ -2718,7 +3032,7 @@ function attachAdminHandlers(){
       filamentTypes: [...document.querySelectorAll('.ptype:checked')].map(c => c.value),
       featured: !!document.getElementById('pFeatured')?.checked,
       images: (state.__draftImages || []).filter(isSafeImageSrc).slice(0, MAX_PRODUCT_IMAGES),
-      icon: "📦",
+      icon: "cube",
     };
 
     btn.disabled = true;
