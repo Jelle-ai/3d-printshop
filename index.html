@@ -337,7 +337,14 @@
   .img-slot button{position:absolute;top:3px;right:3px;width:19px;height:19px;border-radius:999px;border:none;background:var(--ink);color:var(--paper);font-size:10px;display:flex;align-items:center;justify-content:center;padding:0;}
   .img-add{width:62px;height:62px;border-radius:9px;border:1px dashed var(--line-strong);background:var(--surface);color:var(--muted);font-size:15px;display:flex;align-items:center;justify-content:center;}
   .img-add:hover{border-color:var(--accent);color:var(--accent);}
-  .admin-row{display:flex;align-items:center;gap:11px;margin-bottom:8px;}
+  /* Bewust geen flex: de bestelkaarten gebruiken dezelfde klasse en moeten
+     hun regels onder elkaar houden. De productlijst zet er zelf .between bij. */
+  .admin-row{margin-bottom:8px;}
+  .admin-row.between{display:flex;align-items:center;gap:11px;}
+  .order-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px;}
+  .order-meta{min-width:0;flex:1 1 160px;}
+  .order-foot{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);}
+  .order-foot .addr{min-width:0;flex:1 1 200px;word-break:break-word;}
   .admin-row img{width:42px;height:42px;border-radius:8px;object-fit:cover;display:block;}
   .admin-thumb{width:42px;height:42px;border-radius:8px;background:var(--plate);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;color:var(--muted);}
 
@@ -2249,7 +2256,16 @@ function viewCustom(){
             Op iPhone: kies <em>Bladeren</em> en zoek je bestanden in Bestanden of iCloud Drive.
           </p>
 
-          ${parts.length ? parts.map(partCard).join("") : `
+          ${state.storageDown ? `
+          <div class="notice" style="margin-bottom:16px;">
+            <p class="notice-title">${ic("triangle-exclamation")} Bestanden versturen werkt nog niet</p>
+            <p class="muted" style="font-size:13px;margin:0;">
+              De bestandsopslag van de shop is nog niet ingesteld. Je kunt hier alles bekijken en
+              de prijs zien, maar het versturen lukt pas als dat geregeld is.
+            </p>
+          </div>` : ``}
+
+        ${parts.length ? parts.map(partCard).join("") : `
             <div class="cart-item" style="text-align:center;padding:28px;">
               <p class="muted" style="font-size:13px;margin:0;">Nog geen onderdelen. Upload hierboven je eerste bestand.</p>
             </div>`}
@@ -2457,8 +2473,33 @@ function attachMeshViewers(){
   });
 }
 
+/* Kijkt één keer of de opslag bereikbaar is, zodat een klant het vooraf weet
+   in plaats van na het invullen van een hele opdracht. */
+async function probeStorage(){
+  if (state.storageChecked || !state.user) return;
+  state.storageChecked = true;
+  try{
+    const { getStorage, ref, uploadBytesResumable } = await loadStorage();
+    const store = getStorage(app);
+    store.maxUploadRetryTime = 8000;
+    store.maxOperationRetryTime = 6000;
+    const probe = ref(store, `uploads/${state.user.uid}/.probe`);
+    const task = uploadBytesResumable(probe, new Blob([new Uint8Array(1)]));
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => { try{ task.cancel(); }catch(e){} reject(new Error("timeout")); }, 9000);
+      task.on('state_changed', null,
+        err => { clearTimeout(t); reject(err); },
+        () => { clearTimeout(t); resolve(); });
+    });
+  }catch(err){
+    state.storageDown = true;
+    if (state.view === "custom") render();
+  }
+}
+
 function attachCustomHandlers(){
   attachMeshViewers();
+  probeStorage();
   const input = document.getElementById('fileInput');
   if (input) input.onchange = async (e) => {
     const files = Array.from(e.target.files || []);
@@ -2595,10 +2636,21 @@ async function addJobToCart(btn){
       // aanvoelt als een knop die niets doet.
       const task = uploadBytesResumable(sref, part.file);
       await new Promise((resolve, reject) => {
+        // Eigen tijdslimiet bovenop die van Firebase: blijft de teller op nul
+        // staan, dan is er geen verbinding met de opslag en heeft doorgaan
+        // geen zin. Zolang er bytes binnenkomen schuift de limiet mee.
+        let last = Date.now();
+        const watchdog = setInterval(() => {
+          if (Date.now() - last > 30000){
+            clearInterval(watchdog);
+            try{ task.cancel(); }catch(e){}
+            reject(Object.assign(new Error("geen antwoord van de opslag"), { code: "storage/retry-limit" }));
+          }
+        }, 2000);
         task.on('state_changed',
-          snap => showProgress(snap.bytesTransferred),
-          reject,
-          resolve);
+          snap => { last = Date.now(); showProgress(snap.bytesTransferred); },
+          err => { clearInterval(watchdog); reject(err); },
+          () => { clearInterval(watchdog); resolve(); });
       });
       doneBytes += part.fileSize;
       showProgress(0);
@@ -2894,9 +2946,27 @@ function orderTracker(o){
 function etaLine(o){
   if (o.status === "Geleverd") return `<div class="eta"><i class="fa-solid fa-box-open" aria-hidden="true"></i> <strong>Geleverd.</strong> Bedankt voor je bestelling!</div>`;
   const w = deliveryWindow(o);
-  const verb = o.status === "Verzonden" ? "Onderweg — verwacht" : "Verwachte levering";
-  return `<div class="eta"><i class="fa-solid fa-truck" aria-hidden="true"></i> ${verb} tussen <strong>${esc(fmtDate(w.from))}</strong> en <strong>${esc(fmtDate(w.to))}</strong></div>`;
+  if (o.status === "Verzonden"){
+    return `
+      <div class="eta" style="display:block;">
+        <p style="margin:0 0 4px;">${ic("truck")} Onderweg — verwacht tussen <strong>${esc(fmtDate(w.from))}</strong> en <strong>${esc(fmtDate(w.to))}</strong></p>
+        <p class="muted" style="font-size:12px;margin:0 0 10px;">Is je pakket aangekomen? Laat het ons weten, dan weten wij dat het goed is aangekomen.</p>
+        <button class="btn btn-accent btn-sm" onclick="window.__confirmReceived('${o.id}')">
+          ${ic("circle-check")} Ontvangen
+        </button>
+      </div>`;
+  }
+  return `<div class="eta">${ic("truck")} Verwachte levering tussen <strong>${esc(fmtDate(w.from))}</strong> en <strong>${esc(fmtDate(w.to))}</strong></div>`;
 }
+
+/* De klant bevestigt zelf de ontvangst; pas dan staat een bestelling op
+   geleverd. Zo weet de shop dat het pakket echt is aangekomen. */
+window.__confirmReceived = async (id) => {
+  try{
+    await updateDoc(doc(db, "orders", id), { status: "Geleverd", receivedAt: Date.now() });
+    notify("Bedankt — ontvangst bevestigd");
+  }catch(err){ notify("Bevestigen mislukt: " + err.message); }
+};
 window.__toggleOrder = (id) => {
   state.__openOrder = state.__openOrder === id ? null : id;
   render();
@@ -3009,12 +3079,21 @@ function viewAdmin(){
     </div>`).join("");
   const orderRows = state.orders.map(o=>`
     <div class="admin-row" style="margin-bottom:10px;">
-      <div class="between" style="margin-bottom:6px;">
-        <div><div style="font-size:13px;font-weight:600;">${esc(o.userEmail)}</div><div class="muted font-mono" style="font-size:11px;">${new Date(o.createdAt).toLocaleString('nl-BE')}</div></div>
-        <select class="field" style="width:auto;margin:0;padding:5px 8px;font-size:12px;" onchange="window.__setStatus('${o.id}',this.value)">
-          ${["In verwerking","Wordt geprint","Verzonden","Geleverd"].map(s=>`<option ${s===o.status?'selected':''}>${s}</option>`).join("")}
+      <div class="order-head">
+        <div class="order-meta">
+          <div style="font-size:13px;font-weight:600;word-break:break-word;">${esc(o.userEmail)}</div>
+          <div class="muted font-mono" style="font-size:11px;">
+            ${esc(orderNumber(o))} · ${esc(new Date(o.createdAt).toLocaleString('nl-BE'))}
+          </div>
+        </div>
+        <select class="field" style="width:auto;max-width:100%;margin:0;padding:6px 9px;font-size:12px;flex:0 0 auto;"
+                onchange="window.__setStatus('${o.id}',this.value)">
+          ${ORDER_STEPS.map(s=>`<option ${s===o.status?'selected':''}>${s}</option>`).join("")}
         </select>
       </div>
+      ${o.receivedAt ? `<p class="muted font-mono" style="font-size:10px;margin:-4px 0 8px;">
+        Ontvangst bevestigd door de klant op ${esc(new Date(o.receivedAt).toLocaleDateString('nl-BE'))}
+      </p>` : ``}
       ${o.items.map(i=>`
         <div class="row" style="gap:7px;font-size:13px;margin-bottom:3px;">
           ${i.filament ? `<span class="fil-chip ${finishClass(i.filament.finish)}" style="width:13px;height:13px;border-radius:4px;background-color:${esc(i.filament.hex)};flex-shrink:0;"></span>` : ``}
@@ -3029,11 +3108,11 @@ function viewAdmin(){
               </div>`).join("")}
             <div class="muted font-mono" style="font-size:10px;margin-top:3px;">${i.assembled ? "GEASSEMBLEERD LEVEREN" : "LOS LEVEREN"}</div>
           </div>` : ``}`).join("")}
-      <div class="between font-mono" style="font-size:11px;">
-        <span class="muted">${esc(o.shippingAddress?.street||'')}, ${esc(o.shippingAddress?.zip||'')} ${esc(o.shippingAddress?.city||'')}, ${esc(o.shippingCountry||'')}</span>
-        <span style="color:var(--accent);">${fmtEUR(o.total)}</span>
+      <div class="order-foot font-mono" style="font-size:11px;">
+        <span class="muted addr">${esc(o.shippingAddress?.street||'')}, ${esc(o.shippingAddress?.zip||'')} ${esc(o.shippingAddress?.city||'')}, ${esc(o.shippingCountry||'')}</span>
+        <span class="price" style="font-size:14px;">${fmtEUR(o.total)}</span>
       </div>
-      ${o.paymentMethod ? `<div class="muted font-mono" style="font-size:10px;margin-top:4px;">${esc(o.paymentMethod)}${o.paymentRef ? " · " + esc(o.paymentRef) : ""}${o.demoPayment ? " · TESTGELD" : ""}</div>` : ``}
+      ${o.paymentMethod ? `<div class="muted font-mono" style="font-size:10px;margin-top:6px;word-break:break-word;">${esc(o.paymentMethod)}${o.paymentRef ? " · " + esc(o.paymentRef) : ""}${o.demoPayment ? " · TESTGELD" : ""}</div>` : ``}
     </div>`).join("");
   return `
     <div style="padding:32px 0;">
