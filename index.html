@@ -198,7 +198,12 @@ const storage = getStorage(app);
 
 /* --------------------------- constants --------------------------- */
 const FIRESTORE_CONSOLE_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore`;
-const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8MB (Firebase Storage, not Firestore, so bigger is fine)
+/* Firebase Storage kan veel meer aan; de grens ligt bij wat een browser op
+   een telefoon in het geheugen kan analyseren. 100MB is ruim voor elk
+   realistisch printmodel. */
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+const INFILL_OPTIONS = [10, 15, 20, 25, 35, 50, 75, 100];
+const LAYER_OPTIONS = ["0.12mm", "0.16mm", "0.20mm", "0.28mm"];
 const SHIPPING_RATES = [
   { country: "België", price: 4.95 },
   { country: "Nederland", price: 7.95 },
@@ -225,6 +230,7 @@ let state = {
   productsError: null,
   productsStalled: false,
   seedError: null,
+  ordersError: null,
   filaments: [],
   orders: [],
   cart: JSON.parse(sessionStorage.getItem('lc_cart') || "[]"),
@@ -398,6 +404,8 @@ function findFilament(id){ return (state.filaments || []).find(f => f.id === id)
 /* Vertaalt een Firestore-fout naar iets waar je wat mee kunt. */
 function firestoreHint(err){
   const code = err?.code || "";
+  if (/index/i.test(err?.message || ""))
+    return "Deze zoekopdracht heeft een extra index nodig in Firestore. De foutmelding in de browserconsole bevat een link die de index in één klik aanmaakt.";
   if (/permission-denied/.test(code))
     return "Firestore weigert toegang. Zet in de Firebase Console de regels op testmodus (Firestore Database → Rules), of controleer of ze niet verlopen zijn — testregels vervallen na 30 dagen.";
   if (/unavailable|failed-precondition|not-found/.test(code))
@@ -459,6 +467,120 @@ function buildDefaultFilaments(){
     for (const [name, hex] of colors)
       out.push({ id: slug(type) + "--" + slug(name), type, finish, name, hex, enabled: true });
   return out;
+}
+
+/* =====================================================================
+   Prijsberekening
+   Een echte slicer draait hier niet in de browser, dus rekenen we met wat
+   een slicer ook doet: hoeveel materiaal gaat erin en hoe lang duurt het.
+   Voor een geüpload model komt de geometrie uit het bestand zelf; voor een
+   model op maat uit de afmetingen die de klant opgeeft.
+   ===================================================================== */
+const FILAMENT_DENSITY = {   // g/cm³
+  "PLA Basic": 1.24, "PLA Matte": 1.22, "PLA Silk+": 1.25,
+  "PETG HF": 1.27, "ABS": 1.04, "TPU": 1.21,
+};
+const DEFAULT_PRICING = {
+  pricePerKg: 24.99,        // wat een spoel Bambu Lab kost
+  hourlyRate: 3.50,         // machinetijd per uur
+  setupFee: 2.50,           // voorbereiden, van de plaat halen, nakijken
+  flowRate: 9,              // mm³/s gemiddeld tijdens het printen
+  layerOverheadSec: 2.4,    // vaste tijd per laag (bewegen, laagwissel)
+  margin: 1.25,             // opslag op de kostprijs
+  wallThickness: 1.2,       // mm, standaard 3 perimeters
+  minPrice: 4.50,
+};
+function pricing(){ return { ...DEFAULT_PRICING, ...(state.pricing || {}) }; }
+
+/* Materiaalvolume: de wand plus het ingevulde binnenwerk. */
+function printedVolumeMm3({ solidVolume, surfaceArea, infill, wallThickness }){
+  const shell = Math.min(surfaceArea * wallThickness, solidVolume);
+  const inner = Math.max(0, solidVolume - shell);
+  return shell + inner * (infill / 100);
+}
+/* Printtijd: materiaal door de nozzle, plus vaste tijd per laag. */
+function printSeconds(volumeMm3, heightMm, layerHeightMm, p){
+  const layers = Math.max(1, Math.ceil(heightMm / (layerHeightMm || 0.2)));
+  return volumeMm3 / p.flowRate + layers * p.layerOverheadSec;
+}
+/* Rekent één schatting door en geeft alle tussenstappen terug, zodat we ze
+   aan de klant kunnen tonen in plaats van alleen een getal. */
+function estimate({ solidVolume, surfaceArea, heightMm, infill, layerHeight, filamentType, quantity = 1 }){
+  const p = pricing();
+  const volume = printedVolumeMm3({ solidVolume, surfaceArea, infill, wallThickness: p.wallThickness });
+  const seconds = printSeconds(volume, heightMm, layerHeight, p);
+  const density = FILAMENT_DENSITY[filamentType] || 1.24;
+  const grams = (volume / 1000) * density;              // mm³ → cm³ → gram
+  const materialCost = (grams / 1000) * p.pricePerKg;
+  const machineCost = (seconds / 3600) * p.hourlyRate;
+  const raw = (materialCost + machineCost + p.setupFee) * p.margin;
+  const unit = Math.max(p.minPrice, Math.ceil(raw * 20) / 20);   // afronden op 5 cent
+  return { volume, seconds, grams, materialCost, machineCost, unit, total: unit * quantity };
+}
+function fmtDuration(sec){
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  return h ? `${h}u ${String(m).padStart(2,"0")}m` : `${m}m`;
+}
+
+/* --------------------------- STL inlezen --------------------------- */
+/* Leest een STL (binair of ASCII) en geeft het echte volume, de oppervlakte
+   en de afmetingen terug. Volume via de som van getekende tetraëders. */
+function parseStl(buffer){
+  const view = new DataView(buffer);
+  let count = 0, vol6 = 0, area2 = 0;
+  const min = [Infinity,Infinity,Infinity], max = [-Infinity,-Infinity,-Infinity];
+
+  // Alles wordt al tijdens het lezen opgeteld; er wordt nooit een lijst met
+  // driehoeken opgebouwd, zodat ook een bestand van tientallen MB's op een
+  // telefoon niet het geheugen opblaast.
+  function addTriangle(ax,ay,az, bx,by,bz, cx,cy,cz){
+    count++;
+    vol6 += ax*(by*cz - bz*cy) - ay*(bx*cz - bz*cx) + az*(bx*cy - by*cx);
+    const ux=bx-ax, uy=by-ay, uz=bz-az, vx=cx-ax, vy=cy-ay, vz=cz-az;
+    area2 += Math.hypot(uy*vz - uz*vy, uz*vx - ux*vz, ux*vy - uy*vx);
+    if (ax<min[0]) min[0]=ax; if (ax>max[0]) max[0]=ax;
+    if (bx<min[0]) min[0]=bx; if (bx>max[0]) max[0]=bx;
+    if (cx<min[0]) min[0]=cx; if (cx>max[0]) max[0]=cx;
+    if (ay<min[1]) min[1]=ay; if (ay>max[1]) max[1]=ay;
+    if (by<min[1]) min[1]=by; if (by>max[1]) max[1]=by;
+    if (cy<min[1]) min[1]=cy; if (cy>max[1]) max[1]=cy;
+    if (az<min[2]) min[2]=az; if (az>max[2]) max[2]=az;
+    if (bz<min[2]) min[2]=bz; if (bz>max[2]) max[2]=bz;
+    if (cz<min[2]) min[2]=cz; if (cz>max[2]) max[2]=cz;
+  }
+
+  const looksBinary = buffer.byteLength >= 84 &&
+    view.getUint32(80, true) * 50 + 84 === buffer.byteLength;
+
+  if (looksBinary){
+    const n = view.getUint32(80, true);
+    for (let i = 0; i < n; i++){
+      const o = 84 + i * 50 + 12; // de normaalvector slaan we over
+      addTriangle(
+        view.getFloat32(o,true),    view.getFloat32(o+4,true),  view.getFloat32(o+8,true),
+        view.getFloat32(o+12,true), view.getFloat32(o+16,true), view.getFloat32(o+20,true),
+        view.getFloat32(o+24,true), view.getFloat32(o+28,true), view.getFloat32(o+32,true));
+    }
+  } else {
+    const text = new TextDecoder().decode(new Uint8Array(buffer));
+    const re = /vertex\s+(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)/g;
+    const v = [];
+    let m;
+    while ((m = re.exec(text))){
+      v.push(+m[1], +m[2], +m[3]);
+      if (v.length === 9){
+        addTriangle(v[0],v[1],v[2], v[3],v[4],v[5], v[6],v[7],v[8]);
+        v.length = 0;
+      }
+    }
+  }
+  if (!count) return null;
+  return {
+    triangles: count,
+    volume: Math.abs(vol6) / 6,        // mm³
+    surface: area2 / 2,                // mm²
+    size: [max[0]-min[0], max[1]-min[1], max[2]-min[2]],
+  };
 }
 
 /* --------------------------- kleurhulpjes --------------------------- */
@@ -579,6 +701,14 @@ async function writeSeed(){
       dimensions:"80 × 70 × 62 mm", printTime:"2u 15m", weight:48, featured:false, icon:"📱", shape:"wedge",
       images:[ printSvg(PROFILE.wedge,"#c9cdd4","#a8adb6","#22262c"), printSvg(PROFILE.wedge,"#dfe3e9","#c9cdd4","#1a1d22") ],
     },
+    {
+      name:"Opbergdoosje — Op maat", price:0, stock:999, category:"Bureau",
+      description:"Een doosje in precies de maat die jij nodig hebt. Geef lengte, breedte en hoogte op en de prijs volgt meteen — die hangt af van hoeveel filament erin gaat en hoe lang het printen duurt. Met een deksel dat op wrijving sluit.",
+      material:"PLA Basic", infill:"20%", layerHeight:"0.20mm", color:"Naar keuze",
+      printTime:"varieert", weight:0, featured:true, icon:"📦", shape:"box",
+      sizing:{ enabled:true, def:[80,60,40], min:[30,30,15], max:[220,220,180], solidity:22, infill:20, layerHeight:"0.20mm" },
+      images:[ printSvg(PROFILE.box,"#8E9089","#6f747d","#22262c") ],
+    },
   ];
   for (const p of seed) await addDoc(collection(db,"products"), { ...p, createdAt: Date.now() });
   await setDoc(doc(db,"meta","seeded_v2"), { done:true });
@@ -590,15 +720,23 @@ function listenOrders(){
   if (unsubOrders) unsubOrders();
   if (!state.user) return;
   const base = collection(db, "orders");
+  // Bewust géén orderBy naast de where op uid: die combinatie vereist een
+  // samengestelde index in Firestore, en zonder die index faalt de query —
+  // waardoor een klant zijn eigen bestellingen niet te zien kreeg terwijl de
+  // beheerder (alleen orderBy) ze wel zag. Sorteren doen we hieronder zelf.
   const q = state.profile?.isAdmin
-    ? query(base, orderBy("createdAt","desc"))
-    : query(base, where("uid","==",state.user.uid), orderBy("createdAt","desc"));
+    ? query(base)
+    : query(base, where("uid","==",state.user.uid));
   unsubOrders = onSnapshot(q, (snap) => {
-    state.orders = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+    state.orders = snap.docs
+      .map(d => ({ id:d.id, ...d.data() }))
+      .sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
+    state.ordersError = null;
     if (state.view === "account" || state.view === "admin") render();
-    // subtle live notification for admin
-    if (state.profile?.isAdmin && document.__firstOrderLoad !== false) document.__firstOrderLoad = false;
-  }, (err) => notify("Kan bestellingen niet laden: " + err.message));
+  }, (err) => {
+    state.ordersError = err;
+    if (state.view === "account" || state.view === "admin") render();
+  });
 }
 
 async function placeOrder(shippingCountry, address, payment){
@@ -607,8 +745,10 @@ async function placeOrder(shippingCountry, address, payment){
   const order = {
     uid: state.user.uid,
     userEmail: state.user.email,
-    items: state.cart.map(({id,productId,kind,name,price,qty,filament})=>({
-      id, productId: productId || id, kind, name, price, qty, filament: filament || null,
+    items: state.cart.map(({id,productId,kind,name,price,qty,filament,dims,printTime,grams})=>({
+      id, productId: productId || id, kind, name, price, qty,
+      filament: filament || null, dims: dims || null,
+      printTime: printTime || null, grams: grams || null,
     })),
     shippingCountry, shippingAddress: address,
     shippingCost: rate.price,
@@ -754,8 +894,9 @@ function viewShop(){
         <div style="font-size:14px;">${esc(p.name)}</div>
         <div class="muted font-mono" style="font-size:11px;margin-top:4px;">${esc(p.material||'')}${p.layerHeight ? " · " + esc(p.layerHeight) : ""}</div>
         <div class="between" style="margin-top:6px;">
-          <span class="price">${fmtEUR(p.price)}</span>
-          ${p.stock > 0 ? `` : `<span class="muted font-mono" style="font-size:10px;">uitverkocht</span>`}
+          <span class="price">${sizingOf(p) ? "vanaf " : ""}${fmtEUR(sizingOf(p) ? basePriceOf(p) : p.price)}</span>
+          ${sizingOf(p) ? `<span class="muted font-mono" style="font-size:10px;">op maat</span>`
+            : p.stock > 0 ? `` : `<span class="muted font-mono" style="font-size:10px;">uitverkocht</span>`}
         </div>
       </div>
     </button>`).join("");
@@ -835,9 +976,84 @@ function attachShopHandlers(){
     btn.onclick = () => {
       state.selectedProduct = state.products.find(p=>p.id===btn.dataset.open);
       state.__gallery = 0;
+      state.__dims = null;   // begin bij de standaardmaten van dit product
       go("product");
     };
   });
+}
+
+/* --------------------------- maatwerk per product --------------------------- */
+/* Een doosje is voor iedereen anders. Staat dit aan, dan geeft de klant zelf
+   de afmetingen op en volgt de prijs uit volume en printtijd. */
+function sizingOf(p){
+  const s = p?.sizing;
+  if (!s || !s.enabled) return null;
+  return {
+    def:  s.def  || [80, 60, 40],
+    min:  s.min  || [20, 20, 10],
+    max:  s.max  || [250, 250, 250],
+    solidity: s.solidity ?? 35,     // hoe vol het object is, in procent
+    infill: s.infill ?? 20,
+    layerHeight: s.layerHeight || "0.20mm",
+  };
+}
+function currentDims(p){
+  const s = sizingOf(p);
+  if (!s) return null;
+  const d = state.__dims || s.def;
+  return [0,1,2].map(i => Math.min(s.max[i], Math.max(s.min[i], Math.round(d[i] || s.def[i]))));
+}
+function sizedEstimate(p){
+  const s = sizingOf(p);
+  const [L,W,H] = currentDims(p);
+  const fil = currentFilament(p);
+  return estimate({
+    solidVolume: L * W * H * (s.solidity / 100),
+    surfaceArea: 2 * (L*W + L*H + W*H),
+    heightMm: H,
+    infill: s.infill,
+    layerHeight: parseFloat(s.layerHeight),
+    filamentType: fil ? fil.type : "PLA Basic",
+  });
+}
+/* De prijs die op de pagina en in de winkelwagen geldt. */
+function productPrice(p){
+  return sizingOf(p) ? sizedEstimate(p).unit : p.price;
+}
+/* De prijs bij de kleinst toegestane maat — dat is de "vanaf"-prijs. */
+function basePriceOf(p){
+  const s = sizingOf(p);
+  const [L,W,H] = s.min;
+  return estimate({
+    solidVolume: L * W * H * (s.solidity / 100),
+    surfaceArea: 2 * (L*W + L*H + W*H),
+    heightMm: H, infill: s.infill,
+    layerHeight: parseFloat(s.layerHeight), filamentType: "PLA Basic",
+  }).unit;
+}
+function sizingBlock(p){
+  const s = sizingOf(p);
+  const d = currentDims(p);
+  const labels = ["Lengte", "Breedte", "Hoogte"];
+  return `
+    <div class="fil-block">
+      <div class="between" style="margin-bottom:10px;">
+        <span class="font-display" style="font-size:14px;">Jouw afmetingen</span>
+        <span class="muted font-mono" style="font-size:10px;">IN MM</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+        ${labels.map((lab,i)=>`
+          <div>
+            <label class="field-label">${lab}</label>
+            <input type="number" class="dim" data-dim="${i}" value="${d[i]}"
+                   min="${s.min[i]}" max="${s.max[i]}" step="1" style="margin-bottom:2px;" />
+            <span class="muted font-mono" style="font-size:10px;">${s.min[i]}–${s.max[i]}</span>
+          </div>`).join("")}
+      </div>
+      <p class="muted" style="font-size:11px;margin:10px 0 0;">
+        De prijs volgt je maten: meer materiaal en meer printtijd betekent een hogere prijs.
+      </p>
+    </div>`;
 }
 
 /* Welke afwerking krijgt welk glanslaagje op een staal. */
@@ -917,7 +1133,9 @@ function viewProduct(){
   ].filter(([,v]) => v !== undefined && v !== null && String(v).trim() !== "")
    .map(([k,v]) => `<div class="spec"><span class="label">${esc(k)}</span>${esc(v)}</div>`).join("");
 
-  const inStock = (p.stock ?? 0) > 0;
+  const sizing = sizingOf(p);
+  const est = sizing ? sizedEstimate(p) : null;
+  const inStock = sizing ? true : (p.stock ?? 0) > 0;   // op maat wordt altijd geprint
   return `
     <div style="padding:32px 0;">
       <button class="back" onclick="go('shop')">← Terug naar collectie</button>
@@ -932,13 +1150,16 @@ function viewProduct(){
         <div>
           ${p.category ? `<span class="cat-badge">${esc(p.category)}</span>` : ``}
           <h1 class="font-display" style="font-size:24px;margin:0 0 10px;">${esc(p.name)}</h1>
-          <p class="price" style="font-size:26px;margin:0 0 4px;">${fmtEUR(p.price)}</p>
+          <p class="price" style="font-size:26px;margin:0 0 4px;">${fmtEUR(productPrice(p))}</p>
           <p style="font-size:12px;margin:0 0 16px;" class="muted">
-            <span class="stock-dot" style="background:${inStock ? 'var(--teal)' : 'var(--muted)'}"></span>
-            ${inStock ? esc(p.stock) + " op voorraad" : "Niet op voorraad"}
+            ${sizing
+              ? `<span class="stock-dot" style="background:var(--teal)"></span>Op maat geprint`
+              : `<span class="stock-dot" style="background:${inStock ? 'var(--teal)' : 'var(--muted)'}"></span>${inStock ? esc(p.stock) + " op voorraad" : "Niet op voorraad"}`}
           </p>
           ${p.description ? `<p style="font-size:14px;line-height:1.6;color:var(--text);opacity:.85;">${esc(p.description)}</p>` : ``}
+          ${sizing ? sizingBlock(p) : ``}
           ${filamentPicker(p)}
+          ${est ? priceBreakdown(est) : ``}
           ${specs ? `<div class="spec-grid">${specs}</div>` : ``}
           <div class="row" style="margin-top:18px;">
             <div class="stepper"><button id="qMinus">−</button><span id="qVal">1</span><button id="qPlus">+</button></div>
@@ -974,14 +1195,28 @@ function attachProductHandlers(){
       render();
     };
   });
+  document.querySelectorAll('.dim').forEach(inp=>{
+    inp.onchange = () => {
+      const p = state.selectedProduct;
+      const d = (state.__dims || sizingOf(p).def).slice();
+      d[parseInt(inp.dataset.dim,10)] = parseFloat(inp.value) || 0;
+      state.__dims = d;
+      render();
+    };
+  });
   const add = document.getElementById('addBtn');
   if (add) add.onclick = ()=>{
     const p = state.selectedProduct;
     const f = currentFilament(p);
+    const sizing = sizingOf(p);
+    const dims = sizing ? currentDims(p) : null;
+    const est = sizing ? sizedEstimate(p) : null;
     addToCart({
-      id: f ? `${p.id}::${f.id}` : p.id,   // andere kleur = aparte regel in de winkelwagen
+      // kleur én maat maken de regel uniek, zodat twee varianten niet samensmelten
+      id: [p.id, f?.id, dims?.join("x")].filter(Boolean).join("::"),
       productId: p.id,
-      kind: "product", name: p.name, price: p.price, qty,
+      kind: "product", name: p.name, price: est ? est.unit : p.price, qty,
+      dims, printTime: est ? Math.round(est.seconds) : null, grams: est ? +est.grams.toFixed(1) : null,
       filament: f ? { id:f.id, type:f.type, name:f.name, hex:f.hex, finish:f.finish } : null,
     });
   };
@@ -992,11 +1227,11 @@ function viewCustom(){
     <div style="padding:32px 0;max-width:480px;">
       <button class="back" onclick="go('shop')">← Terug naar collectie</button>
       <h1 class="font-display" style="font-size:22px;">Upload je eigen model</h1>
-      <p class="muted" style="font-size:13px;margin-bottom:20px;">We printen je bestand en sturen het naar je adres. De prijs is een automatische schatting — de shop kan dit na controle aanpassen.</p>
+      <p class="muted" style="font-size:13px;margin-bottom:20px;">We lezen je bestand uit en berekenen de prijs op basis van hoeveel filament erin gaat en hoe lang het printen duurt.</p>
       <label class="upload-box" for="fileInput">
         <span style="font-size:26px;">⬆</span>
         <span id="fileLabel" style="font-size:14px;">${__customFile ? esc(__customFile.name) : "Klik om een .stl, .obj of .3mf bestand te kiezen"}</span>
-        <span class="muted font-mono" style="font-size:11px;">max 8MB</span>
+        <span class="muted font-mono" style="font-size:11px;">max ${MAX_UPLOAD_BYTES / 1024 / 1024}MB</span>
         <!-- Bewust ruim: iOS kent geen bestandstype voor .stl/.obj/.3mf en grijst
              die bestanden uit zodra de lijst te streng is. De controle op de
              extensie gebeurt hieronder in JavaScript. -->
@@ -1008,15 +1243,89 @@ function viewCustom(){
         Op iPhone: kies <em>Bladeren</em> en zoek je bestand in Bestanden of iCloud Drive.
       </p>
       <div id="customForm" class="${__customFile ? '' : 'hidden'}">
+        ${state.__geoBusy ? `<p class="muted" style="font-size:13px;">Model analyseren…</p>` : ``}
+        ${state.__geoError ? `<div class="cart-item" style="border-color:var(--orange);"><p style="font-size:13px;margin:0;color:var(--orange);">${esc(state.__geoError)}</p></div>` : ``}
+        ${state.__geo ? customGeoBlock() : ``}
         ${filamentPicker(null)}
-        <label class="field-label">Geschatte prijs</label>
-        <p class="price" id="estPrice" style="font-size:18px;">${__customFile ? fmtEUR(customEstimate(__customFile)) : ""}</p>
-        <textarea id="customNotes" rows="3" placeholder="Opmerkingen (afwerking, schaal, bijzonderheden...)">${esc(state.__customNotes || "")}</textarea>
-        <button class="btn btn-orange" id="customAddBtn">🛒 Toevoegen aan winkelwagen</button>
+        ${state.__geo ? priceBreakdown(customEstimate()) : ``}
+        <textarea id="customNotes" rows="3" placeholder="Opmerkingen (afwerking, kleurwissel, bijzonderheden...)">${esc(state.__customNotes || "")}</textarea>
+        ${!state.__geo && !state.__geoBusy && __customFile ? `
+          <div class="fil-block">
+            <div class="between">
+              <span class="font-display" style="font-size:14px;">Prijs op aanvraag</span>
+              <span class="muted font-mono" style="font-size:11px;">GEEN AUTOMATISCHE MAAT</span>
+            </div>
+            <p class="muted" style="font-size:12px;margin:8px 0 0;">Je kunt het model gewoon toevoegen. We bekijken het en sturen je een prijs voordat er iets betaald wordt.</p>
+          </div>` : ``}
+        <button class="btn btn-orange" id="customAddBtn" style="width:100%;" ${state.__geoBusy ? 'disabled style="width:100%;opacity:.5;"' : ''}>🛒 Toevoegen aan winkelwagen</button>
       </div>
     </div>`;
 }
-function customEstimate(f){ return Math.max(9.95, 9.95 + (f.size/1024)*0.03); }
+
+/* Wat we uit het bestand hebben gehaald, plus de knoppen die de prijs sturen. */
+function customGeoBlock(){
+  const g = state.__geo;
+  const s = state.__scale || 100;
+  const dim = g.size.map(v => Math.round(v * s / 100));
+  return `
+    <div class="fil-block">
+      <div class="between" style="margin-bottom:10px;">
+        <span class="font-display" style="font-size:14px;">Uit je bestand gelezen</span>
+        <span class="muted font-mono" style="font-size:10px;">${g.triangles.toLocaleString('nl-BE')} DRIEHOEKEN</span>
+      </div>
+      <div class="kv"><span>Afmetingen</span><span class="font-mono">${dim[0]} × ${dim[1]} × ${dim[2]} mm</span></div>
+      <div class="kv"><span>Modelvolume</span><span class="font-mono">${(g.volume * Math.pow(s/100,3) / 1000).toFixed(1)} cm³</span></div>
+
+      <label class="field-label" style="margin-top:12px;">Schaal — ${s}%</label>
+      <input type="range" id="scaleRange" min="25" max="300" step="5" value="${s}" style="width:100%;margin-bottom:10px;" />
+
+      <div class="form-grid">
+        <div>
+          <label class="field-label">Infill</label>
+          <select class="field" id="customInfill">
+            ${INFILL_OPTIONS.map(i=>`<option value="${i}" ${i===(state.__infill||20)?'selected':''}>${i}%</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label class="field-label">Laaghoogte</label>
+          <select class="field" id="customLayer">
+            ${LAYER_OPTIONS.map(l=>`<option ${l===(state.__layer||"0.20mm")?'selected':''}>${l}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* De prijs met zijn opbouw erbij, zodat een klant ziet waar het geld heen gaat. */
+function priceBreakdown(est){
+  return `
+    <div class="fil-block">
+      <div class="between" style="margin-bottom:8px;">
+        <span class="font-display" style="font-size:14px;">Berekende prijs</span>
+        <span class="price" style="font-size:22px;">${fmtEUR(est.unit)}</span>
+      </div>
+      <div class="kv"><span>Filament</span><span class="font-mono">${est.grams.toFixed(1)} g · ${fmtEUR(est.materialCost)}</span></div>
+      <div class="kv"><span>Printtijd</span><span class="font-mono">${fmtDuration(est.seconds)} · ${fmtEUR(est.machineCost)}</span></div>
+      <div class="kv"><span>Voorbereiding</span><span class="font-mono">${fmtEUR(pricing().setupFee)}</span></div>
+      <p class="muted" style="font-size:11px;margin:8px 0 0;">
+        Automatisch berekend uit het volume en de printtijd. Bij een bijzondere vorm die veel steunmateriaal vraagt, kan de shop dit nog bijstellen.
+      </p>
+    </div>`;
+}
+
+function customEstimate(){
+  const g = state.__geo;
+  const s = (state.__scale || 100) / 100;
+  const fil = currentFilament(null);
+  return estimate({
+    solidVolume: g.volume * Math.pow(s, 3),
+    surfaceArea: g.surface * Math.pow(s, 2),
+    heightMm: g.size[2] * s,
+    infill: state.__infill || 20,
+    layerHeight: parseFloat(state.__layer || "0.20"),
+    filamentType: fil ? fil.type : "PLA Basic",
+  });
+}
 let __customFile = null;
 function attachCustomHandlers(){
   // de filamentkiezer werkt hier hetzelfde als op een productpagina
@@ -1035,14 +1344,43 @@ function attachCustomHandlers(){
   const notes = document.getElementById('customNotes');
   if (notes) notes.oninput = () => { state.__customNotes = notes.value; };
 
+  const scale = document.getElementById('scaleRange');
+  if (scale) scale.oninput = () => { state.__scale = parseInt(scale.value,10); render(); };
+  const infill = document.getElementById('customInfill');
+  if (infill) infill.onchange = () => { state.__infill = parseInt(infill.value,10); render(); };
+  const layer = document.getElementById('customLayer');
+  if (layer) layer.onchange = () => { state.__layer = layer.value; render(); };
+
   const input = document.getElementById('fileInput');
-  input.onchange = (e) => {
+  input.onchange = async (e) => {
     const f = e.target.files[0];
     if (!f) return;
     if (!/\.(stl|obj|3mf)$/i.test(f.name)){ notify(`"${f.name}" is geen .stl, .obj of .3mf bestand`); return; }
-    if (f.size > MAX_UPLOAD_BYTES){ notify(`Bestand te groot (${(f.size/1024/1024).toFixed(1)}MB, max 8MB)`); return; }
+    if (f.size > MAX_UPLOAD_BYTES){
+      notify(`Bestand te groot (${(f.size/1024/1024).toFixed(1)}MB, max ${MAX_UPLOAD_BYTES/1024/1024}MB)`); return;
+    }
     __customFile = f;
-    render(); // toont het vervolgformulier met de bewaarde keuzes
+    state.__geo = null; state.__geoError = null; state.__geoBusy = true;
+    state.__scale = 100;
+    render();
+
+    // .obj en .3mf kunnen we niet uitlezen; daarvoor blijft de shop handmatig prijzen
+    if (!/\.stl$/i.test(f.name)){
+      state.__geoBusy = false;
+      state.__geoError = "Van .obj en .3mf kunnen we de afmetingen niet automatisch lezen. Voeg het toch toe — we sturen je een prijs zodra we het bekeken hebben.";
+      render();
+      return;
+    }
+    try{
+      const geo = parseStl(await f.arrayBuffer());
+      if (!geo || !geo.volume) throw new Error("Geen bruikbare vorm gevonden in het bestand");
+      state.__geo = geo;
+    }catch(err){
+      state.__geoError = "Kon het model niet uitlezen: " + (err.message || err);
+    }finally{
+      state.__geoBusy = false;
+      render();
+    }
   };
 
   const addBtn = document.getElementById('customAddBtn');
@@ -1056,20 +1394,31 @@ function attachCustomHandlers(){
       await uploadBytes(sref, f);
       const url = await getDownloadURL(sref);
       const fil = currentFilament(null);
-      const est = customEstimate(f);
+      const g = state.__geo;
+      const est = g ? customEstimate() : null;
+      const s = state.__scale || 100;
       const uploadDoc = await addDoc(collection(db,"uploads"), {
         uid: state.user.uid, fileName: f.name, fileSize: f.size,
         material: fil ? fil.type : "", filament: fil ? { id:fil.id, type:fil.type, name:fil.name, hex:fil.hex, finish:fil.finish } : null,
+        scalePct: s, infill: state.__infill || 20, layerHeight: state.__layer || "0.20mm",
+        geometry: g ? {
+          triangles: g.triangles,
+          volumeMm3: Math.round(g.volume * Math.pow(s/100,3)),
+          sizeMm: g.size.map(v => Math.round(v * s / 100)),
+        } : null,
+        estimate: est ? { grams: +est.grams.toFixed(1), seconds: Math.round(est.seconds), price: est.unit } : null,
         notes: state.__customNotes || "", storageUrl: url, createdAt: Date.now(),
       });
       addToCart({
         id: uploadDoc.id, kind:"custom",
         name: "Eigen model — " + f.name,
-        price: Math.round(est*100)/100, qty: 1,
+        price: est ? est.unit : 0, qty: 1,
+        needsQuote: !est,
         filament: fil ? { id:fil.id, type:fil.type, name:fil.name, hex:fil.hex, finish:fil.finish } : null,
       });
       __customFile = null;
       state.__customNotes = "";
+      state.__geo = null;
       go("cart");
     }catch(err){
       const code = err?.code || "";
@@ -1113,7 +1462,8 @@ function viewCart(){
               <span class="fil-chip ${finishClass(it.filament.finish)}" style="width:13px;height:13px;border-radius:4px;background-color:${esc(it.filament.hex)};"></span>
               <span class="muted font-mono" style="font-size:10px;">${esc(it.filament.type)} · ${esc(it.filament.name)}</span>
             </div>` : ``}
-          <div class="muted font-mono" style="font-size:11px;">${fmtEUR(it.price)} / stuk</div>
+          ${it.dims ? `<div class="muted font-mono" style="font-size:10px;">${it.dims.join(" × ")} mm</div>` : ``}
+          <div class="muted font-mono" style="font-size:11px;">${it.needsQuote ? "prijs op aanvraag" : fmtEUR(it.price) + " / stuk"}</div>
         </div>
       </div>
       <div class="stepper">
@@ -1331,6 +1681,7 @@ function orderCard(o){
             <span class="fil-chip ${finishClass(i.filament.finish)}" style="width:12px;height:12px;border-radius:4px;background-color:${esc(i.filament.hex)};"></span>
             <span class="muted font-mono" style="font-size:10px;">${esc(i.filament.type)} · ${esc(i.filament.name)}</span>
           </div>` : ``}
+        ${i.dims ? `<div class="muted font-mono" style="font-size:10px;">${i.dims.join(" × ")} mm</div>` : ``}
         <div class="muted font-mono" style="font-size:11px;">${i.qty} × ${fmtEUR(i.price)}</div>
       </div>
       <span class="font-mono" style="font-size:12px;">${fmtEUR(i.price * i.qty)}</span>
@@ -1376,6 +1727,12 @@ function viewAccount(){
       ${state.profile?.isAdmin ? `<span class="cat-badge">Beheerder</span>` : ``}
       ${a.street ? `<p class="muted" style="font-size:12px;margin:8px 0 0;">${esc(a.street)}, ${esc(a.zip||'')} ${esc(a.city||'')}</p>` : ``}
       ${state.profileError ? `<p class="muted" style="font-size:12px;margin-top:8px;color:var(--orange);">Je profielgegevens konden niet geladen worden — je blijft wel ingelogd.</p>` : ``}
+      ${state.ordersError ? `
+        <div class="cart-item" style="border-color:var(--orange);margin-top:14px;">
+          <p style="font-size:13px;margin:0 0 6px;color:var(--orange);font-weight:600;">Je bestellingen konden niet geladen worden</p>
+          <p class="muted" style="font-size:13px;margin:0 0 6px;">${esc(firestoreHint(state.ordersError))}</p>
+          <p class="muted font-mono" style="font-size:11px;margin:0;">${esc(state.ordersError.code || state.ordersError.message || '')}</p>
+        </div>` : ``}
 
       <h2 class="font-display" style="font-size:16px;margin:24px 0 10px;">
         ${actief.length ? "Lopende bestellingen" : "Mijn bestellingen"}
@@ -1421,7 +1778,7 @@ function viewAdmin(){
       ${o.items.map(i=>`
         <div class="row" style="gap:7px;font-size:13px;margin-bottom:3px;">
           ${i.filament ? `<span class="fil-chip ${finishClass(i.filament.finish)}" style="width:13px;height:13px;border-radius:4px;background-color:${esc(i.filament.hex)};flex-shrink:0;"></span>` : ``}
-          <span style="min-width:0;">${i.qty}× ${esc(i.name)}${i.filament ? ` <span class="muted font-mono" style="font-size:10px;">${esc(i.filament.type)} · ${esc(i.filament.name)}</span>` : ``}</span>
+          <span style="min-width:0;">${i.qty}× ${esc(i.name)}${i.filament ? ` <span class="muted font-mono" style="font-size:10px;">${esc(i.filament.type)} · ${esc(i.filament.name)}</span>` : ``}${i.dims ? ` <span class="muted font-mono" style="font-size:10px;">${esc(i.dims.join(" × "))} mm</span>` : ``}${i.grams ? ` <span class="muted font-mono" style="font-size:10px;">≈${esc(i.grams)}g · ${esc(fmtDuration(i.printTime||0))}</span>` : ``}</span>
         </div>`).join("")}
       <div class="between font-mono" style="font-size:11px;">
         <span class="muted">${esc(o.shippingAddress?.street||'')}, ${esc(o.shippingAddress?.zip||'')} ${esc(o.shippingAddress?.city||'')}, ${esc(o.shippingCountry||'')}</span>
@@ -1504,6 +1861,31 @@ function viewAdmin(){
                 <label class="field-label">Gewicht (g)</label>
                 <input id="pWeight" type="number" min="0" placeholder="48" value="${ed?.weight ?? ''}" />
               </div>
+            </div>
+
+            <label class="checkbox-row"><input type="checkbox" id="pSizing" style="width:auto;margin:0;" ${ed?.sizing?.enabled ? 'checked' : ''} /> Klant kiest zelf de afmetingen</label>
+            <div id="sizingFields" class="${ed?.sizing?.enabled ? '' : 'hidden'}" style="background:var(--surface2);border-radius:10px;padding:12px;margin-bottom:12px;">
+              <p class="muted" style="font-size:11px;margin:0 0 10px;">De prijs wordt dan berekend uit volume en printtijd. Het vaste prijsveld hierboven vervalt.</p>
+              ${[["Standaard","def",[80,60,40]],["Minimum","min",[20,20,10]],["Maximum","max",[250,250,250]]].map(([lab,key,fallback])=>`
+                <label class="field-label">${lab} (L × B × H in mm)</label>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
+                  ${[0,1,2].map(i=>`<input type="number" class="sz" data-sz="${key}" data-i="${i}" value="${ed?.sizing?.[key]?.[i] ?? fallback[i]}" />`).join("")}
+                </div>`).join("")}
+              <div class="form-grid">
+                <div>
+                  <label class="field-label">Massiefheid (%)</label>
+                  <input type="number" id="pSolidity" min="1" max="100" value="${ed?.sizing?.solidity ?? 35}" />
+                </div>
+                <div>
+                  <label class="field-label">Infill (%)</label>
+                  <input type="number" id="pSizeInfill" min="0" max="100" value="${ed?.sizing?.infill ?? 20}" />
+                </div>
+              </div>
+              <label class="field-label">Laaghoogte</label>
+              <select class="field" id="pSizeLayer">
+                ${LAYER_OPTIONS.map(l=>`<option ${l===(ed?.sizing?.layerHeight||"0.20mm")?'selected':''}>${l}</option>`).join("")}
+              </select>
+              <p class="muted" style="font-size:11px;margin:0;">Massiefheid is hoeveel van de omhullende doos daadwerkelijk materiaal is. Een hol doosje zit rond 20%, een massief figuurtje op 100%.</p>
             </div>
 
             <label class="field-label">Vorm voor het kleurvoorbeeld</label>
@@ -1678,8 +2060,27 @@ function renderImageTray(){
   if (pick) pick.onclick = () => document.getElementById('pImgFile').click();
 }
 
+/* Leest de maatwerkinstellingen uit het beheerformulier. */
+function sizingFromForm(){
+  if (!document.getElementById('pSizing')?.checked) return { enabled: false };
+  const trio = key => [0,1,2].map(i =>
+    parseInt(document.querySelector(`.sz[data-sz="${key}"][data-i="${i}"]`)?.value, 10) || 0);
+  const num = (id, d) => { const v = parseInt(document.getElementById(id)?.value, 10); return isFinite(v) ? v : d; };
+  return {
+    enabled: true,
+    def: trio('def'), min: trio('min'), max: trio('max'),
+    solidity: Math.min(100, Math.max(1, num('pSolidity', 35))),
+    infill: Math.min(100, Math.max(0, num('pSizeInfill', 20))),
+    layerHeight: document.getElementById('pSizeLayer')?.value || "0.20mm",
+  };
+}
+
 function attachAdminHandlers(){
   attachFilamentHandlers();
+  const sizingBox = document.getElementById('pSizing');
+  if (sizingBox) sizingBox.onchange = () => {
+    document.getElementById('sizingFields').classList.toggle('hidden', !sizingBox.checked);
+  };
   if (!Array.isArray(state.__draftImages)) state.__draftImages = [];
   renderImageTray();
 
@@ -1730,6 +2131,7 @@ function attachAdminHandlers(){
       printTime: val('pTime'),
       weight: isFinite(weight) ? weight : 0,
       shape: val('pShape') || "box",
+      sizing: sizingFromForm(),
       filamentTypes: [...document.querySelectorAll('.ptype:checked')].map(c => c.value),
       featured: !!document.getElementById('pFeatured')?.checked,
       images: (state.__draftImages || []).filter(isSafeImageSrc).slice(0, MAX_PRODUCT_IMAGES),
