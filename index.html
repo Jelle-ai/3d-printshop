@@ -577,8 +577,16 @@ function viewCustom(){
         <span style="font-size:26px;">⬆</span>
         <span id="fileLabel" style="font-size:14px;">Klik om een .stl, .obj of .3mf bestand te kiezen</span>
         <span class="muted font-mono" style="font-size:11px;">max 8MB</span>
-        <input type="file" id="fileInput" accept=".stl,.obj,.3mf" style="display:none;" />
+        <!-- Bewust ruim: iOS kent geen bestandstype voor .stl/.obj/.3mf en grijst
+             die bestanden uit zodra de lijst te streng is. De controle op de
+             extensie gebeurt hieronder in JavaScript. -->
+        <input type="file" id="fileInput"
+               accept=".stl,.obj,.3mf,model/stl,model/obj,model/3mf,application/sla,application/octet-stream,*/*"
+               style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;" />
       </label>
+      <p class="muted" style="font-size:11px;margin-top:-4px;">
+        Op iPhone: kies <em>Bladeren</em> en zoek je bestand in Bestanden of iCloud Drive.
+      </p>
       <div id="customForm" class="hidden">
         <label class="field-label">Materiaal</label>
         <select class="field" id="customMaterial">
@@ -597,8 +605,8 @@ function attachCustomHandlers(){
   input.onchange = (e) => {
     const f = e.target.files[0];
     if (!f) return;
-    if (!/\.(stl|obj|3mf)$/i.test(f.name)){ notify("Kies een .stl, .obj of .3mf bestand"); return; }
-    if (f.size > MAX_UPLOAD_BYTES){ notify("Bestand te groot (max 8MB)"); return; }
+    if (!/\.(stl|obj|3mf)$/i.test(f.name)){ notify(`"${f.name}" is geen .stl, .obj of .3mf bestand`); return; }
+    if (f.size > MAX_UPLOAD_BYTES){ notify(`Bestand te groot (${(f.size/1024/1024).toFixed(1)}MB, max 8MB)`); return; }
     __customFile = f;
     document.getElementById('fileLabel').textContent = f.name;
     document.getElementById('customForm').classList.remove('hidden');
@@ -626,7 +634,14 @@ function attachCustomHandlers(){
         });
         go("cart");
       }catch(err){
-        notify("Upload mislukt: " + err.message);
+        const code = err?.code || "";
+        let msg = err.message || String(err);
+        if (/storage\/unauthorized|storage\/unauthenticated/.test(code)) {
+          msg = "Geen toegang tot de opslag — controleer de Storage-regels in Firebase.";
+        } else if (/storage\/unknown|storage\/retry-limit|storage\/bucket-not-found|storage\/project-not-found/.test(code)) {
+          msg = "De bestandsopslag is nog niet ingesteld in Firebase (Build → Storage).";
+        }
+        notify("Upload mislukt: " + msg);
         btn.disabled = false; btn.textContent = "🛒 Toevoegen aan winkelwagen";
       }
     };
