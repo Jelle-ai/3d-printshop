@@ -25,6 +25,13 @@
   .navbtn{display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:8px;background:transparent;border:1px solid var(--surface2);color:var(--text);font-size:13px;}
   .navbtn.primary{background:var(--orange);color:#15171b;border:none;font-weight:600;}
   nav{display:flex;align-items:center;gap:8px;}
+  #authNav{display:flex;align-items:center;gap:8px;}
+  @media(max-width:640px){
+    .header-inner{padding:14px 14px;gap:8px;}
+    nav{gap:6px;}
+    #authNav{gap:6px;}
+    .navbtn{padding:8px 10px;}
+  }
   main{max-width:960px;margin:0 auto;padding:0 20px 96px;}
   .hero{display:flex;flex-wrap:wrap;align-items:center;gap:32px;padding:48px 0;}
   .hero h1{font-size:32px;line-height:1.2;margin:0 0 12px;}
@@ -37,10 +44,11 @@
   .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;}
   @media(min-width:640px){.grid{grid-template-columns:repeat(3,1fr);}}
   .card{text-align:left;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px;background:var(--surface);border:1px solid var(--surface2);color:var(--text);}
-  .thumb{width:100%;aspect-ratio:1/1;border-radius:8px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:32px;}
+  .thumb{width:100%;aspect-ratio:1/1;border-radius:8px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:32px;overflow:hidden;}
+  .thumb img{width:100%;height:100%;object-fit:cover;display:block;}
   .price{font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--teal);}
   .muted{color:var(--muted);}
-  .spec-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0;font-family:'JetBrains Mono',monospace;font-size:12px;}
+  .spec-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:10px;margin:16px 0;font-family:'JetBrains Mono',monospace;font-size:12px;}
   .spec{background:var(--surface);border:1px solid var(--surface2);border-radius:8px;padding:10px;}
   .spec .label{color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.06em;display:block;margin-bottom:4px;}
   input, textarea, select.field{width:100%;background:var(--surface);border:1px solid var(--surface2);color:var(--text);border-radius:8px;padding:9px 11px;margin-bottom:10px;}
@@ -66,6 +74,31 @@
   .rel{position:relative;}
   .checkbox-row{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-bottom:10px;}
   .footer-note{font-size:11px;color:var(--muted);margin-top:12px;display:flex;gap:6px;}
+  /* --- productgalerij --- */
+  .product-layout{display:grid;grid-template-columns:1fr;gap:28px;}
+  @media(min-width:720px){.product-layout{grid-template-columns:1fr 1fr;gap:36px;align-items:start;}}
+  .gallery-main{width:100%;aspect-ratio:1/1;border-radius:12px;background:var(--surface2);overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:72px;}
+  .gallery-main img{width:100%;height:100%;object-fit:cover;display:block;}
+  .gallery-strip{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+  .gallery-strip button{width:58px;height:58px;border-radius:8px;overflow:hidden;border:1px solid var(--surface2);background:var(--surface2);padding:0;flex-shrink:0;}
+  .gallery-strip button.active{border-color:var(--teal);}
+  .gallery-strip img{width:100%;height:100%;object-fit:cover;display:block;}
+  .cat-badge{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--teal);background:var(--surface2);border-radius:999px;padding:4px 10px;margin-bottom:8px;}
+  .card-badge{position:absolute;top:10px;left:10px;font-family:'JetBrains Mono',monospace;font-size:10px;background:var(--orange);color:#15171b;font-weight:700;border-radius:999px;padding:3px 8px;}
+  .stock-dot{display:inline-block;width:7px;height:7px;border-radius:999px;margin-right:6px;}
+  /* --- beheerformulier --- */
+  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 10px;}
+  .img-tray{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
+  .img-slot{position:relative;width:64px;height:64px;border-radius:8px;overflow:hidden;border:1px solid var(--surface2);background:var(--surface2);}
+  .img-slot img{width:100%;height:100%;object-fit:cover;display:block;}
+  .img-slot button{position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:999px;border:none;background:rgba(0,0,0,.7);color:#fff;font-size:12px;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;}
+  .img-add{width:64px;height:64px;border-radius:8px;border:1.5px dashed var(--surface2);background:var(--surface);color:var(--muted);font-size:20px;display:flex;align-items:center;justify-content:center;}
+  .admin-row img{width:44px;height:44px;border-radius:6px;object-fit:cover;display:block;}
+  .admin-thumb{width:44px;height:44px;border-radius:6px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:20px;overflow:hidden;flex-shrink:0;}
+  /* --- demo-betaling --- */
+  .pay-card{background:linear-gradient(135deg,#2a2f36,#1c2025);border:1px solid var(--surface2);border-radius:14px;padding:18px;margin-bottom:16px;}
+  .pay-strip{font-family:'JetBrains Mono',monospace;font-size:16px;letter-spacing:.14em;margin:14px 0 6px;}
+  .demo-banner{background:rgba(255,107,53,.12);border:1px solid var(--orange);color:var(--orange);border-radius:10px;padding:10px 12px;font-size:12px;margin-bottom:16px;}
   @media(max-width:640px){.hide-sm{display:none;}}
 </style>
 </head>
@@ -188,6 +221,9 @@ async function doRegister(name, email, password, address){
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     const profile = { name, email, address, isAdmin: false, createdAt: Date.now() };
     await setDoc(doc(db, "users", cred.user.uid), profile);
+    // onAuthStateChanged leest het profiel al voordat setDoc klaar is, dus zetten we het hier zelf.
+    state.profile = profile;
+    renderAuthNav();
     notify("Account aangemaakt — welkom " + name);
     go("shop");
   }catch(e){ notify("Fout: " + (e.message || e)); }
@@ -214,16 +250,54 @@ function listenProducts(){
   }, (err) => notify("Kan producten niet laden: " + err.message));
 }
 
+/* Bouwt een productafbeelding als SVG: een gestapeld "geprint" object.
+   profile(t) geeft de halve breedte terug, t=0 onderaan tot t=1 bovenaan. */
+function printSvg(profile, colorA, colorB, bg){
+  const rows = 26, top = 72, bottom = 332, h = (bottom - top) / rows;
+  let out = "";
+  for (let i = 0; i < rows; i++){
+    const t = i / (rows - 1);
+    const w = Math.max(7, profile(t) * 150);
+    const y = bottom - (i + 1) * h;
+    out += `<rect x="${(200-w).toFixed(1)}" y="${y.toFixed(1)}" width="${(w*2).toFixed(1)}" height="${(h-2.2).toFixed(1)}" rx="3" fill="${i%2 ? colorB : colorA}" opacity="${(0.58 + 0.42*t).toFixed(2)}"/>`;
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><rect width="400" height="400" fill="${bg}"/><ellipse cx="200" cy="338" rx="105" ry="12" fill="#000" opacity="0.28"/>${out}</svg>`;
+  return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
+}
+const PROFILE = {
+  vase:  t => 0.34 + 0.30 * Math.sin(Math.PI * t),
+  tag:   t => t > 0.80 ? 0.10 : 0.62,
+  wedge: t => 0.70 - 0.46 * t,
+};
+
 async function seedIfEmpty(){
-  const snap = await getDoc(doc(db, "meta", "seeded"));
+  const snap = await getDoc(doc(db, "meta", "seeded_v2"));
   if (snap.exists()) return;
   const seed = [
-    { name:"Sleutelhanger — Geometrisch", price:6.5, material:"PLA", infill:"20%", layerHeight:"0.2mm", description:"Compacte low-poly sleutelhanger.", stock:40, icon:"🔑" },
-    { name:"Plantenvaas — Spiraal", price:18.0, material:"PETG", infill:"vase mode", layerHeight:"0.16mm", description:"Waterdichte vaas, één doorlopende wand.", stock:15, icon:"🏺" },
-    { name:"Telefoonstandaard", price:9.9, material:"PLA", infill:"35%", layerHeight:"0.2mm", description:"Stevige standaard voor de meeste telefoons.", stock:25, icon:"📱" },
+    {
+      name:"Plantenvaas — Spiraal", price:18.0, stock:15, category:"Wonen",
+      description:"Waterdichte vaas geprint in vase mode: één doorlopende wand van onder tot boven, zonder naden. De spiraal vangt het licht anders vanuit elke hoek. Geschikt voor droogbloemen of, met een glazen buisje erin, voor water.",
+      material:"PETG", infill:"vase mode", layerHeight:"0.16mm", color:"Petrol",
+      dimensions:"Ø 90 × 180 mm", printTime:"5u 40m", weight:145, featured:true, icon:"🏺",
+      images:[ printSvg(PROFILE.vase,"#2EC4B6","#25a99d","#22262c"), printSvg(PROFILE.vase,"#3ad4c5","#2EC4B6","#1a1d22") ],
+    },
+    {
+      name:"Sleutelhanger — Hex Tag", price:6.5, stock:40, category:"Accessoires",
+      description:"Compacte tag met zeshoekig patroon en versterkt ophangoog. Print snel, gaat lang mee, en kan op aanvraag met je eigen initialen in reliëf.",
+      material:"PLA", infill:"20%", layerHeight:"0.2mm", color:"Oranje",
+      dimensions:"45 × 28 × 4 mm", printTime:"38m", weight:6, featured:false, icon:"🔑",
+      images:[ printSvg(PROFILE.tag,"#FF6B35","#e05528","#22262c"), printSvg(PROFILE.tag,"#ff8659","#FF6B35","#1a1d22") ],
+    },
+    {
+      name:"Telefoonstandaard — Wedge", price:9.9, stock:25, category:"Bureau",
+      description:"Stevige wig met een uitsparing voor de laadkabel, zodat je toestel opgeladen blijft staan. Past op vrijwel elke telefoon, met of zonder hoesje.",
+      material:"PLA+", infill:"35%", layerHeight:"0.2mm", color:"Grijs",
+      dimensions:"80 × 70 × 62 mm", printTime:"2u 15m", weight:48, featured:false, icon:"📱",
+      images:[ printSvg(PROFILE.wedge,"#c9cdd4","#a8adb6","#22262c"), printSvg(PROFILE.wedge,"#dfe3e9","#c9cdd4","#1a1d22") ],
+    },
   ];
-  for (const p of seed) await addDoc(collection(db,"products"), p);
-  await setDoc(doc(db,"meta","seeded"), { done:true });
+  for (const p of seed) await addDoc(collection(db,"products"), { ...p, createdAt: Date.now() });
+  await setDoc(doc(db,"meta","seeded_v2"), { done:true });
 }
 
 /* --------------------------- orders (realtime) --------------------------- */
@@ -243,7 +317,7 @@ function listenOrders(){
   }, (err) => notify("Kan bestellingen niet laden: " + err.message));
 }
 
-async function placeOrder(shippingCountry, address){
+async function placeOrder(shippingCountry, address, payment){
   if (!state.user){ notify("Log in om te bestellen"); go("login"); return; }
   const rate = SHIPPING_RATES.find(r=>r.country===shippingCountry) || SHIPPING_RATES[0];
   const order = {
@@ -255,12 +329,16 @@ async function placeOrder(shippingCountry, address){
     subtotal: cartTotal(),
     total: cartTotal() + rate.price,
     status: "In verwerking",
+    paymentMethod: payment?.method || "Demo",
+    paymentRef: payment?.ref || "",
+    demoPayment: true,
     createdAt: Date.now(),
   };
   try{
     await addDoc(collection(db,"orders"), order);
     state.cart = []; saveCart();
-    notify("Bestelling geplaatst!");
+    state.__checkout = null;
+    notify("Betaald met testgeld — bestelling geplaatst!");
     go("account");
   }catch(e){ notify("Bestellen mislukt: " + e.message); }
 }
@@ -270,12 +348,60 @@ async function setOrderStatus(orderId, status){
 
 /* --------------------------- products admin --------------------------- */
 async function addProduct(p){
-  await addDoc(collection(db,"products"), p);
+  await addDoc(collection(db,"products"), { ...p, createdAt: Date.now() });
   notify("Product toegevoegd");
 }
+async function updateProduct(id, p){
+  await updateDoc(doc(db,"products",id), p);
+  notify("Product bijgewerkt");
+}
 async function deleteProduct(id){
+  if (!confirm("Dit product definitief verwijderen?")) return;
   await deleteDoc(doc(db,"products",id));
   notify("Product verwijderd");
+}
+
+/* Verkleint een gekozen afbeelding in de browser en geeft een data-URL terug.
+   Zo staan productfoto's in het Firestore-document zelf en is Storage niet nodig. */
+const IMG_MAX_PX = 1000;
+const IMG_MAX_BYTES = 240 * 1024;
+function fileToCompressedDataUrl(file){
+  return new Promise((resolve, reject) => {
+    if (!/^image\//.test(file.type)) return reject(new Error("Dat is geen afbeelding"));
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Kan het bestand niet lezen"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Kan de afbeelding niet openen"));
+      img.onload = () => {
+        const scale = Math.min(1, IMG_MAX_PX / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * scale);
+        c.height = Math.round(img.height * scale);
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = "#22262c";
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        let q = 0.82, url = c.toDataURL('image/jpeg', q);
+        while (url.length > IMG_MAX_BYTES && q > 0.35){
+          q -= 0.12;
+          url = c.toDataURL('image/jpeg', q);
+        }
+        if (url.length > IMG_MAX_BYTES) return reject(new Error("Afbeelding blijft te groot — kies een kleinere"));
+        resolve(url);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+function isSafeImageSrc(s){ return /^https:\/\//i.test(s) || /^data:image\//i.test(s); }
+function productImages(p){ return (Array.isArray(p?.images) ? p.images : []).filter(isSafeImageSrc); }
+function productThumb(p, fontSize){
+  const imgs = productImages(p);
+  return imgs.length
+    ? `<img src="${esc(imgs[0])}" alt="${esc(p.name||'')}" loading="lazy" />`
+    : `<span style="font-size:${fontSize||32}px;">${esc(p?.icon || "📦")}</span>`;
 }
 
 /* --------------------------- cart --------------------------- */
@@ -323,6 +449,7 @@ function render(){
     case "custom": app.innerHTML = viewCustom(); attachCustomHandlers(); return;
     case "cart": app.innerHTML = viewCart(); break;
     case "checkout": app.innerHTML = viewCheckout(); attachCheckoutHandlers(); return;
+    case "payment": app.innerHTML = viewPayment(); attachPaymentHandlers(); return;
     case "login": app.innerHTML = viewAuth(state.__authMode || "login"); attachAuthHandlers(); return;
     case "account": app.innerHTML = viewAccount(); break;
     case "admin": app.innerHTML = viewAdmin(); attachAdminHandlers(); return;
@@ -334,12 +461,16 @@ function viewShop(){
   const layerColors = ["var(--orange)","var(--teal)"];
   const layers = Array.from({length:8}).map((_,i)=>`<div class="layer" style="width:${100-i*7}%;background:${layerColors[i%2]};opacity:${0.3+(i/8)*0.7};animation-delay:${i*0.1}s"></div>`).join("");
   const cards = state.products.map(p => `
-    <button class="card" data-open="${p.id}">
-      <div class="thumb">${p.icon || "📦"}</div>
+    <button class="card rel" data-open="${p.id}">
+      ${p.featured ? `<span class="card-badge">Uitgelicht</span>` : ``}
+      <div class="thumb">${productThumb(p)}</div>
       <div>
         <div style="font-size:14px;">${esc(p.name)}</div>
-        <div class="muted font-mono" style="font-size:11px;margin-top:4px;">${esc(p.material)} · ${esc(p.layerHeight)}</div>
-        <div class="price" style="margin-top:6px;">${fmtEUR(p.price)}</div>
+        <div class="muted font-mono" style="font-size:11px;margin-top:4px;">${esc(p.material||'')}${p.layerHeight ? " · " + esc(p.layerHeight) : ""}</div>
+        <div class="between" style="margin-top:6px;">
+          <span class="price">${fmtEUR(p.price)}</span>
+          ${p.stock > 0 ? `` : `<span class="muted font-mono" style="font-size:10px;">uitverkocht</span>`}
+        </div>
       </div>
     </button>`).join("");
   return `
@@ -363,6 +494,7 @@ function attachShopHandlers(){
   document.querySelectorAll('[data-open]').forEach(btn=>{
     btn.onclick = () => {
       state.selectedProduct = state.products.find(p=>p.id===btn.dataset.open);
+      state.__gallery = 0;
       go("product");
     };
   });
@@ -371,25 +503,51 @@ function attachShopHandlers(){
 function viewProduct(){
   const p = state.selectedProduct;
   if (!p) return `<p class="muted">Product niet gevonden.</p>`;
+  const imgs = productImages(p);
+  const active = Math.min(state.__gallery || 0, Math.max(0, imgs.length - 1));
+  const main = imgs.length
+    ? `<img id="galleryMain" src="${esc(imgs[active])}" alt="${esc(p.name)}" />`
+    : `<span>${esc(p.icon || "📦")}</span>`;
+  const strip = imgs.length > 1 ? `
+    <div class="gallery-strip">
+      ${imgs.map((src,i)=>`<button class="${i===active?'active':''}" data-img="${i}"><img src="${esc(src)}" alt="Afbeelding ${i+1}" /></button>`).join("")}
+    </div>` : ``;
+
+  const specs = [
+    ["Materiaal", p.material],
+    ["Infill", p.infill],
+    ["Laaghoogte", p.layerHeight],
+    ["Kleur", p.color],
+    ["Afmetingen", p.dimensions],
+    ["Printtijd", p.printTime],
+    ["Gewicht", p.weight ? p.weight + " g" : ""],
+  ].filter(([,v]) => v !== undefined && v !== null && String(v).trim() !== "")
+   .map(([k,v]) => `<div class="spec"><span class="label">${esc(k)}</span>${esc(v)}</div>`).join("");
+
+  const inStock = (p.stock ?? 0) > 0;
   return `
     <div style="padding:32px 0;">
       <button class="back" onclick="go('shop')">← Terug naar collectie</button>
-      <div style="display:grid;grid-template-columns:1fr;gap:32px;">
-        <div class="thumb" style="aspect-ratio:1/1;font-size:64px;">${p.icon||"📦"}</div>
+      <div class="product-layout">
         <div>
-          <h1 class="font-display" style="font-size:24px;">${esc(p.name)}</h1>
-          <p class="muted" style="font-size:14px;">${esc(p.description||"")}</p>
-          <div class="spec-grid">
-            <div class="spec"><span class="label">Materiaal</span>${esc(p.material)}</div>
-            <div class="spec"><span class="label">Infill</span>${esc(p.infill)}</div>
-            <div class="spec"><span class="label">Laaghoogte</span>${esc(p.layerHeight)}</div>
-          </div>
-          <p class="price" style="font-size:22px;">${fmtEUR(p.price)}</p>
-          <p class="muted" style="font-size:12px;margin-bottom:16px;">${p.stock>0 ? p.stock+" op voorraad" : "Niet op voorraad"}</p>
-          <div class="row">
+          <div class="gallery-main">${main}</div>
+          ${strip}
+        </div>
+        <div>
+          ${p.category ? `<span class="cat-badge">${esc(p.category)}</span>` : ``}
+          <h1 class="font-display" style="font-size:24px;margin:0 0 10px;">${esc(p.name)}</h1>
+          <p class="price" style="font-size:26px;margin:0 0 4px;">${fmtEUR(p.price)}</p>
+          <p style="font-size:12px;margin:0 0 16px;" class="muted">
+            <span class="stock-dot" style="background:${inStock ? 'var(--teal)' : 'var(--muted)'}"></span>
+            ${inStock ? esc(p.stock) + " op voorraad" : "Niet op voorraad"}
+          </p>
+          ${p.description ? `<p style="font-size:14px;line-height:1.6;color:var(--text);opacity:.85;">${esc(p.description)}</p>` : ``}
+          ${specs ? `<div class="spec-grid">${specs}</div>` : ``}
+          <div class="row" style="margin-top:18px;">
             <div class="stepper"><button id="qMinus">−</button><span id="qVal">1</span><button id="qPlus">+</button></div>
-            <button class="btn btn-orange" id="addBtn" ${p.stock<=0?"disabled":""}>🛒 Toevoegen</button>
+            <button class="btn btn-orange" id="addBtn" ${inStock ? "" : "disabled style=\"opacity:.5;\""}>🛒 Toevoegen</button>
           </div>
+          <p class="footer-note">🖨 Wordt op bestelling geprint — verzending binnen 3 tot 5 werkdagen.</p>
         </div>
       </div>
     </div>`;
@@ -399,7 +557,11 @@ function attachProductHandlers(){
   const qv = document.getElementById('qVal');
   document.getElementById('qMinus').onclick = ()=>{ qty=Math.max(1,qty-1); qv.textContent=qty; };
   document.getElementById('qPlus').onclick = ()=>{ qty++; qv.textContent=qty; };
-  document.getElementById('addBtn').onclick = ()=>{
+  document.querySelectorAll('[data-img]').forEach(btn=>{
+    btn.onclick = () => { state.__gallery = parseInt(btn.dataset.img,10) || 0; render(); };
+  });
+  const add = document.getElementById('addBtn');
+  if (add) add.onclick = ()=>{
     const p = state.selectedProduct;
     addToCart({ id:p.id, kind:"product", name:p.name, price:p.price, qty });
   };
@@ -478,7 +640,11 @@ function viewCart(){
   const items = state.cart.map(it=>`
     <div class="cart-item row between" style="margin-bottom:10px;">
       <div class="row" style="flex:1;">
-        <div class="thumb" style="width:44px;height:44px;font-size:18px;">${it.kind==='custom'?'📄':'📦'}</div>
+        <div class="admin-thumb">${
+          it.kind==='custom'
+            ? '📄'
+            : productThumb(state.products.find(x=>x.id===it.id) || {}, 18)
+        }</div>
         <div>
           <div style="font-size:13px;">${esc(it.name)}</div>
           <div class="muted font-mono" style="font-size:11px;">${fmtEUR(it.price)} / stuk</div>
@@ -520,7 +686,7 @@ function viewCheckout(){
         <div class="between"><span class="muted">Verzending</span><span id="ckShipVal">${fmtEUR(SHIPPING_RATES[0].price)}</span></div>
         <div class="between" style="border-top:1px solid var(--surface2);margin-top:6px;padding-top:6px;color:var(--teal);"><span>Totaal</span><span id="ckTotalVal">${fmtEUR(cartTotal()+SHIPPING_RATES[0].price)}</span></div>
       </div>
-      <button class="btn btn-orange" style="width:100%;" id="placeOrderBtn">Bestelling plaatsen</button>
+      <button class="btn btn-orange" style="width:100%;" id="placeOrderBtn">Naar betaling →</button>
       <p class="footer-note">⚠ Demo-omgeving: er wordt geen echte betaling verwerkt.</p>
     </div>`;
 }
@@ -537,7 +703,72 @@ function attachCheckoutHandlers(){
     const zip = document.getElementById('ckZip').value.trim();
     const city = document.getElementById('ckCity').value.trim();
     if (!street || !zip || !city){ notify("Vul je adres volledig in"); return; }
-    placeOrder(sel.value, { street, zip, city });
+    state.__checkout = { country: sel.value, address: { street, zip, city } };
+    go("payment");
+  };
+}
+
+function viewPayment(){
+  const ck = state.__checkout;
+  if (!ck || state.cart.length === 0){
+    return `<div style="padding:32px 0;"><p class="muted">Geen bestelling in behandeling.</p><button class="navbtn" onclick="go('cart')">← Naar winkelwagen</button></div>`;
+  }
+  const rate = SHIPPING_RATES.find(r=>r.country===ck.country) || SHIPPING_RATES[0];
+  const total = cartTotal() + rate.price;
+  return `
+    <div style="padding:32px 0;max-width:480px;">
+      <button class="back" onclick="go('checkout')">← Terug naar gegevens</button>
+      <h1 class="font-display" style="font-size:22px;margin-bottom:6px;">Betalen</h1>
+      <div class="demo-banner">
+        <strong>Testmodus — je betaalt met nepgeld.</strong><br />
+        Er wordt geen echte betaling verwerkt en er is geen kaart nodig. De bestelling wordt wel gewoon aangemaakt, zodat je de hele flow kunt uittesten.
+      </div>
+
+      <div class="pay-card">
+        <div class="between">
+          <span class="font-mono muted" style="font-size:11px;">TESTKAART</span>
+          <span class="font-display" style="font-size:13px;color:var(--orange);">DEMO</span>
+        </div>
+        <div class="pay-strip">4242 4242 4242 4242</div>
+        <div class="between font-mono muted" style="font-size:11px;">
+          <span>${esc(state.profile?.name || 'TESTGEBRUIKER').toUpperCase()}</span>
+          <span>12/34 · CVC 123</span>
+        </div>
+      </div>
+
+      <label class="field-label">Betaalmethode</label>
+      <select class="field" id="payMethod">
+        <option>Bancontact (test)</option>
+        <option>Kredietkaart (test)</option>
+        <option>iDEAL (test)</option>
+        <option>Overschrijving (test)</option>
+      </select>
+
+      <div class="cart-item font-mono" style="font-size:13px;margin:16px 0;">
+        <div class="between"><span class="muted">Subtotaal</span><span>${fmtEUR(cartTotal())}</span></div>
+        <div class="between"><span class="muted">Verzending naar ${esc(ck.country)}</span><span>${fmtEUR(rate.price)}</span></div>
+        <div class="between" style="border-top:1px solid var(--surface2);margin-top:6px;padding-top:6px;color:var(--teal);"><span>Te betalen</span><span>${fmtEUR(total)}</span></div>
+      </div>
+
+      <button class="btn btn-orange" style="width:100%;" id="payBtn">💳 Betaal ${fmtEUR(total)} met testgeld</button>
+      <p class="footer-note">🔒 Zodra je echt wilt verkopen, vervangen we deze stap door een echte betaalprovider.</p>
+    </div>`;
+}
+function attachPaymentHandlers(){
+  const btn = document.getElementById('payBtn');
+  if (!btn) return;
+  btn.onclick = async () => {
+    const ck = state.__checkout;
+    if (!ck) { go("cart"); return; }
+    const method = document.getElementById('payMethod').value;
+    btn.disabled = true;
+    btn.textContent = "Betaling verwerken…";
+    // Korte kunstmatige vertraging zodat de flow aanvoelt als een echte betaalpagina.
+    await new Promise(r => setTimeout(r, 900));
+    await placeOrder(ck.country, ck.address, {
+      method,
+      ref: "DEMO-" + Math.random().toString(36).slice(2,8).toUpperCase(),
+    });
   };
 }
 
@@ -600,10 +831,20 @@ function viewAccount(){
 
 function viewAdmin(){
   const tab = state.__adminTab || "products";
+  const ed = state.__editing ? state.products.find(p => p.id === state.__editing) : null;
   const productRows = state.products.map(p=>`
-    <div class="admin-row between" style="margin-bottom:8px;">
-      <div><div style="font-size:13px;">${esc(p.name)}</div><div class="muted font-mono" style="font-size:11px;">${fmtEUR(p.price)} · voorraad ${p.stock}</div></div>
-      <button class="navbtn" onclick="window.__deleteProduct('${p.id}')">🗑</button>
+    <div class="admin-row between" style="margin-bottom:8px;${p.id===state.__editing?'border-color:var(--teal);':''}">
+      <div class="row" style="flex:1;min-width:0;">
+        <div class="admin-thumb">${productThumb(p, 18)}</div>
+        <div style="min-width:0;">
+          <div style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(p.name)}</div>
+          <div class="muted font-mono" style="font-size:11px;">${fmtEUR(p.price)} · voorraad ${esc(p.stock ?? 0)}${p.category ? " · " + esc(p.category) : ""}</div>
+        </div>
+      </div>
+      <div class="row" style="flex-shrink:0;gap:6px;">
+        <button class="navbtn" onclick="window.__editProduct('${p.id}')" title="Bewerken">✎</button>
+        <button class="navbtn" onclick="window.__deleteProduct('${p.id}')" title="Verwijderen">🗑</button>
+      </div>
     </div>`).join("");
   const orderRows = state.orders.map(o=>`
     <div class="admin-row" style="margin-bottom:10px;">
@@ -618,6 +859,7 @@ function viewAdmin(){
         <span class="muted">${esc(o.shippingAddress?.street||'')}, ${esc(o.shippingAddress?.zip||'')} ${esc(o.shippingAddress?.city||'')}, ${esc(o.shippingCountry||'')}</span>
         <span style="color:var(--teal);">${fmtEUR(o.total)}</span>
       </div>
+      ${o.paymentMethod ? `<div class="muted font-mono" style="font-size:10px;margin-top:4px;">${esc(o.paymentMethod)}${o.paymentRef ? " · " + esc(o.paymentRef) : ""}${o.demoPayment ? " · TESTGELD" : ""}</div>` : ``}
     </div>`).join("");
   return `
     <div style="padding:32px 0;">
@@ -630,19 +872,76 @@ function viewAdmin(){
       <div id="adminProducts" class="${tab==='products'?'':'hidden'}">
         <div style="display:grid;grid-template-columns:1fr;gap:24px;">
           <div>
-            <h2 class="font-display" style="font-size:15px;margin-bottom:10px;">+ Nieuw product</h2>
-            <input id="pName" placeholder="Naam" />
-            <textarea id="pDesc" rows="2" placeholder="Beschrijving"></textarea>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-              <input id="pPrice" type="number" step="0.01" placeholder="Prijs (€)" />
-              <input id="pStock" type="number" placeholder="Voorraad" value="10" />
-              <select class="field" id="pMaterial"><option>PLA</option><option>PLA+</option><option>PETG</option><option>ABS</option><option>Resin</option></select>
-              <input id="pLayer" placeholder="Laaghoogte" value="0.2mm" />
+            <div class="between" style="margin-bottom:10px;">
+              <h2 class="font-display" style="font-size:15px;margin:0;">${ed ? "✎ Product bewerken" : "+ Nieuw product"}</h2>
+              ${ed ? `<button class="navbtn" onclick="window.__cancelEdit()">Annuleren</button>` : ``}
             </div>
-            <button class="btn btn-orange" id="addProductBtn">Product toevoegen</button>
+
+            <label class="field-label">Afbeeldingen (max ${MAX_PRODUCT_IMAGES})</label>
+            <div class="img-tray" id="imgTray"></div>
+            <input type="file" id="pImgFile" accept="image/*" multiple style="display:none;" />
+            <div class="row" style="margin-bottom:12px;">
+              <input id="pImgUrl" placeholder="…of plak een afbeeldings-URL (https://)" style="margin:0;" />
+              <button class="navbtn" id="addImgUrlBtn" style="flex-shrink:0;">Toevoegen</button>
+            </div>
+
+            <label class="field-label">Naam</label>
+            <input id="pName" placeholder="Bijv. Plantenvaas — Spiraal" value="${esc(ed?.name || '')}" />
+
+            <label class="field-label">Beschrijving</label>
+            <textarea id="pDesc" rows="3" placeholder="Waar is het voor, hoe is het geprint, waarom is het leuk?">${esc(ed?.description || '')}</textarea>
+
+            <div class="form-grid">
+              <div>
+                <label class="field-label">Prijs (€)</label>
+                <input id="pPrice" type="number" step="0.01" min="0" placeholder="18.00" value="${ed?.price ?? ''}" />
+              </div>
+              <div>
+                <label class="field-label">Voorraad</label>
+                <input id="pStock" type="number" min="0" placeholder="10" value="${ed?.stock ?? 10}" />
+              </div>
+              <div>
+                <label class="field-label">Categorie</label>
+                <input id="pCategory" placeholder="Wonen, Bureau, …" value="${esc(ed?.category || '')}" />
+              </div>
+              <div>
+                <label class="field-label">Kleur</label>
+                <input id="pColor" placeholder="Petrol" value="${esc(ed?.color || '')}" />
+              </div>
+              <div>
+                <label class="field-label">Materiaal</label>
+                <select class="field" id="pMaterial">
+                  ${["PLA","PLA+","PETG","ABS","TPU","Resin"].map(m=>`<option ${m===(ed?.material||'PLA')?'selected':''}>${m}</option>`).join("")}
+                </select>
+              </div>
+              <div>
+                <label class="field-label">Infill</label>
+                <input id="pInfill" placeholder="20%" value="${esc(ed?.infill || '20%')}" />
+              </div>
+              <div>
+                <label class="field-label">Laaghoogte</label>
+                <input id="pLayer" placeholder="0.2mm" value="${esc(ed?.layerHeight || '0.2mm')}" />
+              </div>
+              <div>
+                <label class="field-label">Afmetingen</label>
+                <input id="pDim" placeholder="80 × 70 × 62 mm" value="${esc(ed?.dimensions || '')}" />
+              </div>
+              <div>
+                <label class="field-label">Printtijd</label>
+                <input id="pTime" placeholder="2u 15m" value="${esc(ed?.printTime || '')}" />
+              </div>
+              <div>
+                <label class="field-label">Gewicht (g)</label>
+                <input id="pWeight" type="number" min="0" placeholder="48" value="${ed?.weight ?? ''}" />
+              </div>
+            </div>
+
+            <label class="checkbox-row"><input type="checkbox" id="pFeatured" style="width:auto;margin:0;" ${ed?.featured ? 'checked' : ''} /> Uitlichten in de collectie</label>
+
+            <button class="btn btn-orange" id="addProductBtn" style="width:100%;">${ed ? "Wijzigingen opslaan" : "Product toevoegen"}</button>
           </div>
           <div>
-            <h2 class="font-display" style="font-size:15px;margin-bottom:10px;">Huidige producten</h2>
+            <h2 class="font-display" style="font-size:15px;margin-bottom:10px;">Huidige producten (${state.products.length})</h2>
             ${productRows || `<p class="muted" style="font-size:13px;">Nog geen producten.</p>`}
           </div>
         </div>
@@ -652,25 +951,109 @@ function viewAdmin(){
       </div>
     </div>`;
 }
+const MAX_PRODUCT_IMAGES = 4;
 window.__deleteProduct = deleteProduct;
 window.__setStatus = setOrderStatus;
 window.__setAdminTab = (tab) => { state.__adminTab = tab; render(); };
+window.__editProduct = (id) => {
+  const p = state.products.find(x => x.id === id);
+  if (!p) return;
+  state.__editing = id;
+  state.__draftImages = productImages(p).slice();
+  state.__adminTab = "products";
+  render();
+  window.scrollTo(0,0);
+};
+window.__cancelEdit = () => { state.__editing = null; state.__draftImages = []; render(); };
+window.__removeDraftImage = (i) => { state.__draftImages.splice(i,1); renderImageTray(); };
+
+function renderImageTray(){
+  const tray = document.getElementById('imgTray');
+  if (!tray) return;
+  const imgs = state.__draftImages || [];
+  tray.innerHTML = imgs.map((src,i)=>`
+    <div class="img-slot">
+      <img src="${esc(src)}" alt="Afbeelding ${i+1}" />
+      <button onclick="window.__removeDraftImage(${i})" title="Verwijderen">×</button>
+    </div>`).join("")
+    + (imgs.length < MAX_PRODUCT_IMAGES ? `<button class="img-add" id="pickImgBtn" title="Afbeelding kiezen">+</button>` : ``);
+  const pick = document.getElementById('pickImgBtn');
+  if (pick) pick.onclick = () => document.getElementById('pImgFile').click();
+}
+
 function attachAdminHandlers(){
+  if (!Array.isArray(state.__draftImages)) state.__draftImages = [];
+  renderImageTray();
+
+  const fileInput = document.getElementById('pImgFile');
+  if (fileInput) fileInput.onchange = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    for (const f of files){
+      if ((state.__draftImages || []).length >= MAX_PRODUCT_IMAGES){ notify(`Maximaal ${MAX_PRODUCT_IMAGES} afbeeldingen`); break; }
+      try{
+        state.__draftImages.push(await fileToCompressedDataUrl(f));
+        renderImageTray();
+      }catch(err){ notify(err.message); }
+    }
+  };
+
+  const urlBtn = document.getElementById('addImgUrlBtn');
+  if (urlBtn) urlBtn.onclick = () => {
+    const input = document.getElementById('pImgUrl');
+    const url = input.value.trim();
+    if (!url) return;
+    if (!isSafeImageSrc(url)){ notify("Gebruik een https-adres van een afbeelding"); return; }
+    if (state.__draftImages.length >= MAX_PRODUCT_IMAGES){ notify(`Maximaal ${MAX_PRODUCT_IMAGES} afbeeldingen`); return; }
+    state.__draftImages.push(url);
+    input.value = "";
+    renderImageTray();
+  };
+
   const btn = document.getElementById('addProductBtn');
-  if (btn) btn.onclick = () => {
-    const name = document.getElementById('pName').value.trim();
-    const price = parseFloat(document.getElementById('pPrice').value);
-    if (!name || !price) { notify("Vul naam en prijs in"); return; }
-    addProduct({
+  if (btn) btn.onclick = async () => {
+    const val = id => (document.getElementById(id)?.value || "").trim();
+    const name = val('pName');
+    const price = parseFloat(val('pPrice'));
+    if (!name){ notify("Vul een naam in"); return; }
+    if (!isFinite(price) || price <= 0){ notify("Vul een geldige prijs in"); return; }
+
+    const weight = parseInt(val('pWeight'),10);
+    const data = {
       name, price,
-      description: document.getElementById('pDesc').value.trim(),
-      stock: parseInt(document.getElementById('pStock').value,10)||0,
-      material: document.getElementById('pMaterial').value,
-      infill: "20%",
-      layerHeight: document.getElementById('pLayer').value.trim() || "0.2mm",
+      description: val('pDesc'),
+      stock: parseInt(val('pStock'),10) || 0,
+      category: val('pCategory'),
+      color: val('pColor'),
+      material: val('pMaterial'),
+      infill: val('pInfill') || "20%",
+      layerHeight: val('pLayer') || "0.2mm",
+      dimensions: val('pDim'),
+      printTime: val('pTime'),
+      weight: isFinite(weight) ? weight : 0,
+      featured: !!document.getElementById('pFeatured')?.checked,
+      images: (state.__draftImages || []).filter(isSafeImageSrc).slice(0, MAX_PRODUCT_IMAGES),
       icon: "📦",
-    });
-    ["pName","pDesc","pPrice"].forEach(id=>document.getElementById(id).value="");
+    };
+
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = "Opslaan…";
+    try{
+      if (state.__editing){
+        await updateProduct(state.__editing, data);
+        state.__editing = null;
+      } else {
+        await addProduct(data);
+      }
+      state.__draftImages = [];
+      render();
+      window.scrollTo(0,0);
+    }catch(err){
+      notify("Opslaan mislukt: " + err.message);
+      btn.disabled = false;
+      btn.textContent = original;
+    }
   };
 }
 
