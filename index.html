@@ -363,7 +363,7 @@
     <span>Bambu Lab X1C</span>
     <span>256 &times; 256 &times; 256 mm</span>
     <span>Verzending uit Lebbeke, BE</span>
-    <span>Prijs berekend uit volume en printtijd</span>
+    <span>Prijs uit de echte slice, niet uit een schatting</span>
   </div>
 </div>
 
@@ -621,10 +621,12 @@ onAuthStateChanged(auth, async (u) => {
     }
     listenOrders();
     listenProducts(); // opnieuw luisteren (beheerder ziet alles)
+    resumeJob();      // stond er nog een offerte te wachten op de slicer?
   } else {
     state.profile = null;
     state.profileError = null;
     state.orders = [];
+    stopJob();
     listenProducts();
   }
   renderAuthNav();
@@ -855,6 +857,11 @@ const DEFAULT_PRICING = {
   assemblyBase: 4.00,       // eerste onderdeel in elkaar zetten
   assemblyPerPart: 1.50,    // elk volgend onderdeel
   discountTiers: [{ from: 3, pct: 5 }, { from: 6, pct: 10 }, { from: 12, pct: 15 }],
+  // De slice-brug op de werkplaats-PC laat Bambu Studio het model echt slicen en
+  // stuurt de werkelijke printtijd en het werkelijke gewicht terug. Staat dit aan,
+  // dan wacht de klant daarop in plaats van op onze eigen berekening af te gaan.
+  sliceRequired: true,
+  sliceTimeoutMin: 15,      // duurt het langer, dan rekenen we toch met de schatting
 };
 const MAX_PARTS = 12;       // zoals bij PCBWay: twaalf onderdelen per opdracht
 function pricing(){ return { ...DEFAULT_PRICING, ...(state.pricing || {}) }; }
@@ -870,6 +877,20 @@ function printSeconds(volumeMm3, heightMm, layerHeightMm, p){
   const layers = Math.max(1, Math.ceil(heightMm / (layerHeightMm || 0.2)));
   return volumeMm3 / p.flowRate + layers * p.layerOverheadSec;
 }
+/* Van tijd en gewicht naar een bedrag. Dit is het enige stuk dat de prijs
+   bepaalt, of die tijd en dat gewicht nu uit onze eigen berekening komen of
+   uit Bambu Studio zelf. Zo kost hetzelfde model altijd hetzelfde. */
+function priceFrom({ seconds, grams, filamentType, pricePerKg, quantity = 1 }){
+  const p = pricing();
+  // duurder plastic slaat door in de prijs
+  const kg = pricePerKg ?? DEFAULT_PRICE_PER_KG[filamentType] ?? p.pricePerKg;
+  const materialCost = (grams / 1000) * kg;
+  const machineCost = (seconds / 3600) * p.hourlyRate;
+  const raw = (materialCost + machineCost + p.setupFee) * p.margin;
+  const unit = Math.max(p.minPrice, Math.ceil(raw * 20) / 20);   // afronden op 5 cent
+  return { seconds, grams, materialCost, machineCost, unit, total: unit * quantity };
+}
+
 /* Rekent één schatting door en geeft alle tussenstappen terug, zodat we ze
    aan de klant kunnen tonen in plaats van alleen een getal. */
 function estimate({ solidVolume, surfaceArea, heightMm, infill, layerHeight, filamentType, pricePerKg, quantity = 1 }){
@@ -878,13 +899,7 @@ function estimate({ solidVolume, surfaceArea, heightMm, infill, layerHeight, fil
   const seconds = printSeconds(volume, heightMm, layerHeight, p);
   const density = FILAMENT_DENSITY[filamentType] || 1.24;
   const grams = (volume / 1000) * density;              // mm³ → cm³ → gram
-  // duurder plastic slaat door in de prijs
-  const kg = pricePerKg ?? DEFAULT_PRICE_PER_KG[filamentType] ?? p.pricePerKg;
-  const materialCost = (grams / 1000) * kg;
-  const machineCost = (seconds / 3600) * p.hourlyRate;
-  const raw = (materialCost + machineCost + p.setupFee) * p.margin;
-  const unit = Math.max(p.minPrice, Math.ceil(raw * 20) / 20);   // afronden op 5 cent
-  return { volume, seconds, grams, materialCost, machineCost, unit, total: unit * quantity };
+  return { volume, ...priceFrom({ seconds, grams, filamentType, pricePerKg, quantity }) };
 }
 function fmtDuration(sec){
   const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
@@ -1808,6 +1823,7 @@ function render(){
     case "shop": app.innerHTML = viewShop(); break;
     case "product": app.innerHTML = viewProduct(); attachProductHandlers(); return;
     case "custom": app.innerHTML = viewCustom(); attachCustomHandlers(); return;
+    case "quote": app.innerHTML = viewQuote(); attachQuoteHandlers(); return;
     case "cart": app.innerHTML = viewCart(); break;
     case "checkout": app.innerHTML = viewCheckout(); attachCheckoutHandlers(); return;
     case "payment": app.innerHTML = viewPayment(); attachPaymentHandlers(); return;
@@ -2293,6 +2309,246 @@ function projectTotals(){
   };
 }
 
+/* =====================================================================
+   De offerte: wachten tot Bambu Studio het model echt geslicet heeft
+   De brug op de werkplaats-PC pikt de opdracht op, laat Bambu Studio het
+   werk doen en schrijft de werkelijke printtijd en het werkelijke gewicht
+   terug in hetzelfde document. Wij luisteren daarop mee.
+   ===================================================================== */
+const SLICE_LABEL = {
+  wachten: "in de wachtrij",
+  bezig: "wordt geslicet",
+  klaar: "geslicet",
+  mislukt: "niet gelukt",
+};
+
+/* De prijs van één onderdeel uit een verstuurde opdracht. Zijn de echte
+   cijfers binnen, dan tellen die; anders vallen we terug op onze eigen
+   berekening zodat er nooit een leeg bedrag op het scherm staat. */
+function jobPartPrice(u){
+  const s = u.slice || null;
+  const sliced = !!(s && s.status === "klaar" && s.seconds > 0 && s.grams > 0);
+  const fil = u.filament ? findFilament(u.filament.id) : null;
+  return {
+    sliced,
+    ...priceFrom({
+      seconds: sliced ? s.seconds : (u.seconds || 0),
+      grams:   sliced ? s.grams   : (u.grams || 0),
+      filamentType: u.filament?.type,
+      pricePerKg: fil ? fil.pricePerKg : undefined,
+    }),
+  };
+}
+
+function jobTotals(job){
+  const parts = job?.parts || [];
+  const qty = parts.reduce((s,u) => s + (u.qty || 1), 0);
+  const rows = parts.map(u => ({ part: u, price: jobPartPrice(u) }));
+  const subtotal = rows.reduce((s,r) => s + r.price.unit * (r.part.qty || 1), 0);
+  const pct = volumeDiscount(qty);
+  const discount = subtotal * pct / 100;
+  const p = pricing();
+  const assembly = (job?.assembled && parts.length > 1)
+    ? p.assemblyBase + p.assemblyPerPart * (parts.length - 1)
+    : 0;
+  return {
+    rows, parts: parts.length, qty, subtotal, pct, discount, assembly,
+    grams: rows.reduce((s,r) => s + r.price.grams * (r.part.qty || 1), 0),
+    seconds: rows.reduce((s,r) => s + r.price.seconds * (r.part.qty || 1), 0),
+    total: Math.max(0, subtotal - discount) + assembly,
+    sliced: rows.length > 0 && rows.every(r => r.price.sliced),
+  };
+}
+
+/* Hoever staat het met het slicen van de hele opdracht? */
+function jobSliceState(job){
+  const parts = job?.parts || [];
+  if (!parts.length) return "wachten";
+  if (parts.some(u => u.slice?.status === "mislukt")) return "mislukt";
+  if (parts.every(u => u.slice?.status === "klaar")) return "klaar";
+  if (parts.some(u => u.slice?.status === "bezig")) return "bezig";
+  return "wachten";
+}
+
+let jobUnsub = null, jobTick = null;
+function stopJob(){
+  if (jobUnsub){ jobUnsub(); jobUnsub = null; }
+  if (jobTick){ clearInterval(jobTick); jobTick = null; }
+  state.job = null;
+  sessionStorage.removeItem('lc_job');
+}
+function listenJob(id){
+  if (jobUnsub) jobUnsub();
+  sessionStorage.setItem('lc_job', id);
+  jobUnsub = onSnapshot(doc(db, "uploads", id), snap => {
+    if (!snap.exists()) return;
+    state.job = { id, ...snap.data() };
+    state.jobError = null;
+    if (state.view === "quote") render();
+  }, err => {
+    state.jobError = err;
+    if (state.view === "quote") render();
+  });
+  // Terwijl we wachten loopt de klok door; zo blijft de wachttijd kloppen en
+  // valt de terugvalknop op tijd binnen.
+  if (jobTick) clearInterval(jobTick);
+  jobTick = setInterval(() => { if (state.view === "quote") render(); }, 5000);
+}
+/* Na een herlaadbeurt de wachtende offerte weer oppikken. Wie op een prijs
+   staat te wachten hoort die pagina terug te zien, niet de startpagina. */
+function resumeJob(){
+  const id = sessionStorage.getItem('lc_job');
+  if (!id || jobUnsub) return;
+  listenJob(id);
+  if (state.view === "shop") go("quote");
+}
+
+function jobWaitedMin(){
+  const since = state.job?.createdAt || Date.now();
+  return (Date.now() - since) / 60000;
+}
+function jobTimedOut(){
+  return jobWaitedMin() > (pricing().sliceTimeoutMin || 15);
+}
+
+function viewQuote(){
+  const job = state.job;
+  if (!job) return jobUnsub
+    ? `<div style="padding:48px 0;text-align:center;">
+         <p class="muted"><i class="fa-solid fa-spinner" aria-hidden="true"></i> Je prijs wordt berekend — even je opdracht ophalen…</p>
+       </div>`
+    : `<div style="padding:48px 0;text-align:center;">
+         <p class="muted">Er staat geen opdracht te wachten.</p>
+         <button class="btn btn-accent" onclick="go('custom')">Een model uploaden</button>
+       </div>`;
+
+  const st = jobSliceState(job);
+  const t = jobTotals(job);
+  const klaar = st === "klaar";
+  const stuk = st === "mislukt";
+  const mag = klaar || stuk || jobTimedOut();     // afrekenen mag zodra er een prijs vaststaat
+
+  const kop = klaar
+    ? { icon: "circle-check", titel: "Je prijs staat vast",
+        tekst: "Bambu Studio heeft je model geslicet. Onderstaande printtijd en gewicht zijn de echte cijfers, geen schatting." }
+    : stuk
+    ? { icon: "triangle-exclamation", titel: "Slicen lukte niet",
+        tekst: "We konden je model niet door de slicer halen. Je krijgt onze eigen berekening; wij kijken het na voor we printen." }
+    : jobTimedOut()
+    ? { icon: "hourglass-end", titel: "Het duurt langer dan gewoonlijk",
+        tekst: "De slicer antwoordt nu niet. Je kunt bestellen op onze berekening — wijkt de echte prijs af, dan nemen we contact op voor we printen." }
+    : { icon: "gears", titel: "Je prijs wordt berekend",
+        tekst: "Je model gaat door Bambu Studio, precies zoals wij het zouden printen. Dat duurt meestal een paar minuten. Je mag deze pagina open laten staan." };
+
+  const rijen = t.rows.map(({ part: u, price }) => {
+    const s = u.slice || {};
+    const status = s.status || "wachten";
+    return `
+      <div class="admin-row" style="padding:12px 0;border-bottom:1px solid var(--line);">
+        <div class="between" style="gap:12px;flex-wrap:wrap;">
+          <div style="min-width:0;">
+            <div style="font-weight:600;">${esc(u.name)}</div>
+            <div class="muted" style="font-size:11px;">
+              ${u.qty}× &middot; ${esc(u.filament?.name || "")} ${esc(u.filament?.type || "")} &middot; ${esc(u.layerHeight)} &middot; ${u.infill}% vulling
+            </div>
+          </div>
+          <div style="text-align:right;white-space:nowrap;">
+            ${price.sliced
+              ? `<span class="font-mono" style="font-size:12px;">${fmtDuration(price.seconds)} &middot; ${price.grams.toFixed(1)} g</span>`
+              : `<span class="muted" style="font-size:12px;">
+                   <i class="fa-solid fa-${status === "mislukt" ? "circle-xmark" : status === "bezig" ? "spinner" : "clock"}" aria-hidden="true"></i>
+                   ${SLICE_LABEL[status] || status}
+                 </span>`}
+            <div class="font-mono" style="font-size:13px;">${fmtEUR(price.unit * (u.qty || 1))}</div>
+          </div>
+        </div>
+        ${status === "mislukt" && s.error ? `<p class="muted" style="font-size:11px;margin:6px 0 0;">${esc(String(s.error).slice(0,160))}</p>` : ``}
+      </div>`;
+  }).join("");
+
+  return `
+    <div style="padding:32px 0;max-width:760px;margin:0 auto;">
+      <h1 class="font-display" style="font-size:26px;margin:0 0 6px;">
+        <i class="fa-solid fa-${kop.icon}" aria-hidden="true"></i> ${kop.titel}
+      </h1>
+      <p class="muted" style="margin:0 0 20px;max-width:60ch;">${kop.tekst}</p>
+
+      ${!mag ? `<div class="fil-block" style="margin:0 0 18px;">
+        <div class="between" style="gap:12px;">
+          <span><i class="fa-solid fa-spinner" aria-hidden="true"></i> ${SLICE_LABEL[st]}…</span>
+          <span class="muted font-mono" style="font-size:12px;">${Math.floor(jobWaitedMin())} min</span>
+        </div>
+      </div>` : ``}
+
+      <div class="fil-block" style="margin:0;">
+        ${rijen}
+        <div class="kv" style="margin-top:12px;"><span>Filament</span><span class="font-mono">${t.grams.toFixed(0)} g</span></div>
+        <div class="kv"><span>Printtijd</span><span class="font-mono">${fmtDuration(t.seconds)}</span></div>
+        <div style="border-top:1px solid var(--line);margin:12px 0 10px;"></div>
+        <div class="kv"><span>Onderdelen</span><span class="font-mono">${fmtEUR(t.subtotal)}</span></div>
+        ${t.pct ? `<div class="kv"><span>Hoeveelheidskorting ${t.pct}%</span><span class="font-mono" style="color:var(--accent);">&minus;${fmtEUR(t.discount)}</span></div>` : ``}
+        ${t.assembly ? `<div class="kv"><span>Assembleren</span><span class="font-mono">${fmtEUR(t.assembly)}</span></div>` : ``}
+        <div class="kv" style="border-top:1px solid var(--line);margin-top:8px;padding-top:10px;font-size:14px;">
+          <span style="color:var(--ink);font-weight:600;">Totaal</span>
+          <span class="price" style="font-size:20px;">${fmtEUR(t.total)}</span>
+        </div>
+
+        <button class="btn btn-accent" id="quoteCartBtn" style="width:100%;margin-top:14px;${mag ? '' : 'opacity:.5;'}" ${mag ? '' : 'disabled'}>
+          <i class="fa-solid fa-cart-plus" aria-hidden="true"></i>
+          ${mag ? 'Toevoegen aan winkelwagen' : 'Wachten op de prijs…'}
+        </button>
+        <button class="btn btn-ghost btn-sm" id="quoteCancelBtn" style="width:100%;margin-top:8px;justify-content:center;">
+          Deze opdracht laten vallen
+        </button>
+      </div>
+
+      ${state.jobError ? `<p class="muted" style="font-size:12px;margin-top:12px;color:var(--accent);">${esc(firestoreHint(state.jobError))}</p>` : ``}
+    </div>`;
+}
+
+function attachQuoteHandlers(){
+  const add = document.getElementById('quoteCartBtn');
+  if (add) add.onclick = () => {
+    const job = state.job;
+    if (!job) return;
+    const t = jobTotals(job);
+    addToCart({
+      id: job.id, kind: "custom", uploadId: job.id,
+      name: (job.parts || []).length === 1
+        ? "Eigen model — " + job.parts[0].name
+        : `Eigen opdracht — ${(job.parts || []).length} onderdelen`,
+      price: Math.round(t.total * 100) / 100,
+      qty: 1,
+      sliced: t.sliced,
+      jobParts: (job.parts || []).map((u, i) => ({
+        name: u.name, qty: u.qty, filament: u.filament,
+        fileName: u.fileName, index: i, storage: u.storage, storageUrl: u.storageUrl,
+      })),
+      assembled: !!job.assembled,
+    });
+    // De prijs die de klant nu ziet, leggen we vast bij de opdracht zelf.
+    updateDoc(doc(db, "uploads", job.id), {
+      status: "klaar",
+      totals: {
+        parts: t.parts, qty: t.qty, grams: +t.grams.toFixed(1),
+        seconds: Math.round(t.seconds), subtotal: +t.subtotal.toFixed(2),
+        discountPct: t.pct, assembly: +t.assembly.toFixed(2),
+        total: +t.total.toFixed(2), sliced: t.sliced,
+      },
+    }).catch(()=>{});
+    stopJob();
+    go("cart");
+  };
+  const cancel = document.getElementById('quoteCancelBtn');
+  if (cancel) cancel.onclick = () => {
+    const job = state.job;
+    if (job) updateDoc(doc(db, "uploads", job.id), { status: "geannuleerd" }).catch(()=>{});
+    stopJob();
+    notify("Opdracht laten vallen");
+    go("custom");
+  };
+}
+
 function viewCustom(){
   const parts = state.parts || [];
   const t = projectTotals();
@@ -2496,8 +2752,16 @@ function projectSummary(t, canAssemble){
 
       <button class="btn btn-accent" id="addJobBtn" style="width:100%;"
               ${t.parts === 0 || t.pending ? 'disabled style="width:100%;opacity:.5;"' : ''}>
-        ${t.pending ? `<i class="fa-solid fa-spinner" aria-hidden="true"></i> Bezig met analyseren…` : `<i class="fa-solid fa-cart-plus" aria-hidden="true"></i> Toevoegen aan winkelwagen`}
+        ${t.pending
+          ? `<i class="fa-solid fa-spinner" aria-hidden="true"></i> Bezig met analyseren…`
+          : pricing().sliceRequired
+          ? `<i class="fa-solid fa-calculator" aria-hidden="true"></i> Exacte prijs berekenen`
+          : `<i class="fa-solid fa-cart-plus" aria-hidden="true"></i> Toevoegen aan winkelwagen`}
       </button>
+      ${pricing().sliceRequired ? `<p class="muted" style="font-size:11px;margin:8px 0 0;">
+        Bovenstaand bedrag is een richtprijs. Wij halen je model door Bambu Studio en
+        rekenen af op de werkelijke printtijd en het werkelijke gewicht.
+      </p>` : ``}
       ${t.failed ? `<p class="muted" style="font-size:11px;margin:8px 0 0;color:var(--accent);">
         ${t.failed} bestand${t.failed > 1 ? 'en' : ''} kon niet gelezen worden en telt niet mee.
       </p>` : ``}
@@ -2667,6 +2931,7 @@ async function addJobToCart(btn){
   const ready = (state.parts || []).filter(p => p.geo);
   if (!ready.length){ notify("Nog geen bruikbaar onderdeel"); return; }
   const t = projectTotals();
+  const wantSlice = !!pricing().sliceRequired;
 
   btn.disabled = true;
   const totalBytes = ready.reduce((s, p) => s + p.fileSize, 0);
@@ -2750,16 +3015,17 @@ async function addJobToCart(btn){
         grams: est ? +est.grams.toFixed(1) : null,
         seconds: est ? Math.round(est.seconds) : null,
         unitPrice: est ? est.unit : null,
+        // De brug op de werkplaats-PC pikt dit op en vult de echte cijfers in.
+        ...(wantSlice ? { slice: { status: "wachten" } } : {}),
       });
     }
 
     await setDoc(doc(db, "uploads", jobDoc.id), {
       uid: state.user.uid,
-      uid: state.user.uid,
       parts: uploaded,
       assembled: !!state.assembled && t.assembly > 0,
       notes: state.projectNotes || "",
-      status: "klaar",
+      status: wantSlice ? "teslicen" : "klaar",
       totals: {
         parts: t.parts, qty: t.qty, grams: +t.grams.toFixed(1),
         seconds: Math.round(t.seconds), subtotal: +t.subtotal.toFixed(2),
@@ -2767,6 +3033,18 @@ async function addJobToCart(btn){
       },
       createdAt: Date.now(),
     });
+
+    if (wantSlice){
+      // Niet meteen in de winkelwagen: eerst moet Bambu Studio zeggen wat het
+      // echt kost. De offertepagina luistert mee tot dat antwoord binnen is.
+      state.parts = [];
+      state.assembled = false;
+      state.projectNotes = "";
+      state.job = null;
+      listenJob(jobDoc.id);
+      go("quote");
+      return;
+    }
 
     addToCart({
       id: jobDoc.id, kind: "custom",
@@ -2801,7 +3079,9 @@ async function addJobToCart(btn){
     }
     notify("Uploaden mislukt: " + msg);
     btn.disabled = false;
-    btn.innerHTML = '<i class="fa-solid fa-cart-plus" aria-hidden="true"></i> Toevoegen aan winkelwagen';
+    btn.innerHTML = wantSlice
+      ? '<i class="fa-solid fa-calculator" aria-hidden="true"></i> Exacte prijs berekenen'
+      : '<i class="fa-solid fa-cart-plus" aria-hidden="true"></i> Toevoegen aan winkelwagen';
   }
 }
 
@@ -3516,6 +3796,35 @@ const PRICING_FIELDS = [
   ["assemblyBase", "Assembleren, basis (€)", 0.5],
   ["assemblyPerPart", "Assembleren, per extra onderdeel (€)", 0.5],
 ];
+/* De brug op de werkplaats-PC laat elke minuut van zich horen. Zo zie je hier
+   meteen of hij meedraait, in plaats van erachter te komen als een klant wacht. */
+let bridgeUnsub = null;
+function listenBridge(){
+  if (bridgeUnsub) return;
+  bridgeUnsub = onSnapshot(doc(db, "meta", "slicebrug"), snap => {
+    state.bridge = snap.exists() ? snap.data() : null;
+    if (state.view === "admin") render();
+  }, () => {});
+}
+function bridgeStatus(){
+  const b = state.bridge;
+  const geleden = b?.lastSeen ? (Date.now() - b.lastSeen) / 1000 : Infinity;
+  const leeft = geleden < 180;                 // een klop per minuut, drie gemist = weg
+  const kleur = leeft ? "var(--accent)" : "var(--muted)";
+  return `
+    <div class="between" style="gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:12px;">
+      <span style="display:flex;align-items:center;gap:8px;">
+        <i class="fa-solid fa-${leeft ? "circle-check" : "circle-xmark"}" style="color:${kleur};" aria-hidden="true"></i>
+        <span>Slice-brug ${leeft ? "draait" : "niet bereikbaar"}</span>
+      </span>
+      <span class="muted font-mono" style="font-size:11px;">
+        ${b?.lastSeen
+          ? (leeft ? `${Math.round(geleden)} s geleden` : `laatst gezien ${new Date(b.lastSeen).toLocaleString("nl-BE")}`)
+          : "nog nooit gestart"}
+      </span>
+    </div>`;
+}
+
 function viewPricingAdmin(){
   const p = pricing();
   return `
@@ -3532,6 +3841,22 @@ function viewPricingAdmin(){
           </div>`).join("")}
       </div>
       <label class="checkbox-row"><input type="checkbox" id="prAssembly" style="width:auto;margin:0;" ${p.assemblyEnabled ? 'checked' : ''} /> Assembleren aanbieden bij opdrachten met meerdere onderdelen</label>
+    </div>
+
+    <div class="cart-item" style="margin-bottom:14px;">
+      <h3 class="font-display" style="font-size:14px;margin:0 0 4px;">Slicen met Bambu Studio</h3>
+      <p class="muted" style="font-size:11px;margin:0 0 10px;max-width:60ch;">
+        Staat dit aan, dan gaat elk geüpload model eerst door Bambu Studio op je eigen PC en
+        rekent de shop af op de werkelijke printtijd en het werkelijke gewicht in plaats van
+        op de berekening hierboven. Daarvoor moet de slice-brug draaien (map <span class="font-mono">slice-brug</span>).
+        Staat je PC uit, dan wacht de klant tot de tijdslimiet en krijgt daarna de berekende prijs.
+      </p>
+      ${bridgeStatus()}
+      <label class="checkbox-row"><input type="checkbox" id="prSlice" style="width:auto;margin:0;" ${p.sliceRequired ? 'checked' : ''} /> De klant wacht op de echte prijs uit Bambu Studio</label>
+      <div style="max-width:220px;margin-top:10px;">
+        <label class="field-label">Maximaal wachten (minuten)</label>
+        <input type="number" min="1" step="1" id="prSliceTimeout" value="${p.sliceTimeoutMin}" />
+      </div>
     </div>
 
     <div class="cart-item" style="margin-bottom:14px;">
@@ -3552,6 +3877,7 @@ function viewPricingAdmin(){
 }
 
 function attachPricingHandlers(){
+  listenBridge();
   const save = document.getElementById('savePricingBtn');
   if (save) save.onclick = async () => {
     const out = { ...pricing() };
@@ -3560,6 +3886,9 @@ function attachPricingHandlers(){
       if (isFinite(v)) out[el.dataset.key] = v;
     });
     out.assemblyEnabled = !!document.getElementById('prAssembly')?.checked;
+    out.sliceRequired = !!document.getElementById('prSlice')?.checked;
+    const wacht = parseInt(document.getElementById('prSliceTimeout')?.value, 10);
+    if (isFinite(wacht) && wacht > 0) out.sliceTimeoutMin = wacht;
     const tiers = (out.discountTiers || []).map(t => ({ ...t }));
     document.querySelectorAll('.tierfield').forEach(el=>{
       const i = parseInt(el.dataset.i,10);

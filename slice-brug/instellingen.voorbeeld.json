@@ -1,0 +1,20 @@
+{
+  "_uitleg": "Kopieer dit bestand naar instellingen.json en vul je gegevens in. Alles wat je leeg laat zoekt de brug zelf uit.",
+
+  "email": "jelle@mattan.be",
+  "wachtwoord": "jouw wachtwoord van de shop",
+
+  "_bambuPad": "Leeg laten als Bambu Studio op de gewone plaats staat. Anders het volledige pad naar het programma, bijvoorbeeld C:\\Program Files\\Bambu Studio\\bambu-studio.exe",
+  "bambuPad": "",
+
+  "_profielMap": "Leeg laten. Anders de map met machine/, process/ en filament/ erin.",
+  "profielMap": "",
+
+  "printer": "Bambu Lab X1 Carbon 0.4 nozzle",
+
+  "_vullingDoorgeven": "Geeft het vullingspercentage van de klant door aan de slicer. Zet op false als jouw versie van Bambu Studio die optie niet aanvaardt.",
+  "vullingDoorgeven": true,
+
+  "_tijdslimietSec": "Hoe lang Bambu Studio over één model mag doen voor we het opgeven.",
+  "tijdslimietSec": 900
+}
