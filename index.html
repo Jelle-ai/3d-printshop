@@ -455,6 +455,29 @@
   .stap.ja{border-color:var(--accent);}
   .stap.ja .stap-vink, .stap-vink.ja{background:var(--accent);border-color:var(--accent);}
   .stap.ja > span:last-child{color:var(--muted);text-decoration:line-through;}
+  /* een besteld ding in Shopbeheer: dicht een regel, open alle details */
+  .bestelregel{border-top:1px solid var(--line);}
+  .bestelregel:first-of-type{border-top:none;}
+  .bestelregel.open{background:var(--surface2);border-radius:10px;margin:4px 0;border-top-color:transparent;}
+  .bestelregel-kop{
+    display:flex;align-items:center;gap:9px;width:100%;min-height:42px;padding:8px 10px;
+    background:none;border:none;text-align:left;font-size:13px;color:var(--ink);
+  }
+  .bestelregel-kop:hover{background:var(--surface2);border-radius:10px;}
+  .bestelregel-naam{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .bestelregel-pijl{color:var(--muted);flex-shrink:0;font-size:14px;line-height:1;}
+  .bestelregel-body{padding:2px 10px 12px;}
+  .detail-regel{display:flex;align-items:center;gap:10px;font-size:13px;padding:4px 0;line-height:1.4;}
+  .detail-regel .sleutel{
+    color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.06em;
+    text-transform:uppercase;flex:0 0 82px;align-self:flex-start;padding-top:3px;
+  }
+  .detail-regel .waarde{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0;flex:1;word-break:break-word;}
+  .detail-regel .fil-chip{width:15px;height:15px;border-radius:5px;flex-shrink:0;}
+  @media(max-width:420px){
+    .detail-regel{flex-direction:column;align-items:flex-start;gap:1px;}
+    .detail-regel .sleutel{flex:none;padding-top:0;}
+  }
   .dagkop{
     font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;
     color:var(--muted);margin:18px 0 8px;
@@ -5511,25 +5534,7 @@ function viewAdmin(){
         ${ic("circle-check")} Klant bevestigde de ontvangst op ${esc(new Date(o.receivedAt).toLocaleString('nl-BE'))}
       </p>` : ``}
       ${stappenBlok(o)}
-      ${o.items.map(i=>`
-        <div class="row" style="gap:7px;font-size:13px;margin-bottom:3px;">
-          ${i.filament ? `<span class="fil-chip ${finishClass(i.filament.finish)}" style="width:13px;height:13px;border-radius:4px;background-color:${esc(i.filament.hex)};flex-shrink:0;"></span>` : ``}
-          <span style="min-width:0;">${i.qty}× ${esc(i.name)}${i.filament ? ` <span class="muted font-mono" style="font-size:10px;">${esc(i.filament.type)} · ${esc(i.filament.name)}</span>` : ``}${i.dims ? ` <span class="muted font-mono" style="font-size:10px;">${esc(i.dims.join(" × "))} mm</span>` : ``}${i.grams && toonTechniek() ? ` <span class="muted font-mono" style="font-size:10px;">≈${esc(i.grams)}g · ${esc(fmtDuration(i.printTime||0))}</span>` : ``}</span>
-        </div>
-        ${Array.isArray(i.jobParts) && i.jobParts.length ? `
-          <div style="margin:2px 0 8px 20px;">
-            ${i.jobParts.map(j=>`
-              <div class="row" style="gap:7px;font-size:12px;flex-wrap:wrap;margin-bottom:4px;">
-                ${j.filament ? `<span class="fil-chip ${finishClass(j.filament.finish)}" style="width:11px;height:11px;border-radius:3px;background-color:${esc(j.filament.hex)};flex-shrink:0;"></span>` : ``}
-                <span class="muted">${j.qty}× ${esc(j.name)}${j.filament ? ` — ${esc(j.filament.type)} ${esc(j.filament.name)}` : ``}</span>
-                ${j.vereenvoudigd ? `<span class="sale-flag" title="Dit stuk is uit een vereenvoudigd model gehaald — snij het zelf uit het origineel">VEREENVOUDIGD</span>` : ``}
-                ${jobFileButton(i, j)}
-              </div>`).join("")}
-            <div class="muted font-mono" style="font-size:10px;margin-top:3px;">
-              ${i.assembled ? "GEASSEMBLEERD LEVEREN" : "LOS LEVEREN"}
-              ${i.sliced === false ? ` · <span style="color:var(--accent);">MODEL WAS TE ZWAAR OM TE SNIJDEN — PRIJS NAKIJKEN</span>` : ``}
-            </div>
-          </div>` : ``}`).join("")}
+      ${o.items.map((i, idx) => bestelRegel(o, i, idx)).join("")}
       <div class="order-foot font-mono" style="font-size:11px;">
         <span class="muted addr">${esc(o.shippingAddress?.street||'')}, ${esc(o.shippingAddress?.zip||'')} ${esc(o.shippingAddress?.city||'')}, ${esc(o.shippingCountry||'')}</span>
         <span class="price" style="font-size:14px;">${fmtEUR(o.total)}</span>
@@ -5913,6 +5918,71 @@ function stappenBlok(o){
         }).join("")}
       </div>
     </details>`;
+}
+
+/* Eén regel per besteld ding. Dicht zie je waar het over gaat; klap je hem
+   open, dan staat er alles bij wat je nodig hebt om het te printen — élke
+   gekozen kleur, de maat, het gewicht, en de bestanden.
+
+   Vroeger stond hier alleen `filament`. Bij een model met kleurvakken is dat
+   de kleur van het eerste vak, dus zag je er maar één van de drie. */
+function kleurRegel(f, kop){
+  return `
+    <div class="detail-regel">
+      <span class="sleutel">${esc(kop)}</span>
+      <span class="waarde">
+        <span class="fil-chip ${finishClass(f.finish)}" style="background-color:${esc(f.hex || "#888")};"></span>
+        <span>${esc([f.type, f.name].filter(Boolean).join(" · "))}</span>
+      </span>
+    </div>`;
+}
+function bestelRegel(o, i, idx){
+  const sleutel = o.id + "|" + idx;
+  const open = state.__openRegel === sleutel;
+  const vakken = Array.isArray(i.colorChoices) ? i.colorChoices : [];
+  const delen = Array.isArray(i.jobParts) ? i.jobParts : [];
+  const bolletjes = (vakken.length ? vakken : (i.filament ? [i.filament] : []))
+    .slice(0, 6)
+    .map(f => `<span class="fil-chip ${finishClass(f.finish)}" style="width:13px;height:13px;border-radius:4px;background-color:${esc(f.hex || "#888")};flex-shrink:0;"></span>`)
+    .join("");
+  const kort = vakken.length
+    ? `${vakken.length} kleuren`
+    : i.filament ? `${esc(i.filament.type)} · ${esc(i.filament.name)}` : "";
+  return `
+    <div class="bestelregel${open ? " open" : ""}">
+      <button class="bestelregel-kop" data-regel="${esc(sleutel)}">
+        <span class="row" style="gap:5px;flex-shrink:0;">${bolletjes}</span>
+        <span class="bestelregel-naam">${i.qty}× ${esc(i.name)}</span>
+        ${kort ? `<span class="muted font-mono" style="font-size:10px;flex-shrink:0;">${kort}</span>` : ``}
+        <span class="bestelregel-pijl">${open ? "⌃" : "⌄"}</span>
+      </button>
+      ${open ? `
+        <div class="bestelregel-body">
+          ${vakken.length
+            ? vakken.map(c => kleurRegel(c, c.slot || "Kleur")).join("")
+            : i.filament ? kleurRegel(i.filament, "Filament") : ``}
+          ${i.dims ? `<div class="detail-regel"><span class="sleutel">Maat</span><span class="waarde">${esc(i.dims.join(" × "))} mm</span></div>` : ``}
+          <div class="detail-regel"><span class="sleutel">Aantal</span><span class="waarde">${i.qty} × ${fmtEUR(i.price)} = ${fmtEUR(i.price * i.qty)}</span></div>
+          ${i.discountPct ? `<div class="detail-regel"><span class="sleutel">Korting</span><span class="waarde">${i.discountPct}% — was ${fmtEUR(i.listPrice ?? 0)}</span></div>` : ``}
+          ${i.grams && toonTechniek() ? `
+            <div class="detail-regel"><span class="sleutel">Verbruik</span><span class="waarde">≈ ${esc(i.grams)} g · ${esc(fmtDuration(i.printTime || 0))}</span></div>` : ``}
+          ${delen.length ? `
+            <div class="detail-regel" style="align-items:flex-start;">
+              <span class="sleutel">Onderdelen</span>
+              <span class="waarde" style="flex-direction:column;align-items:stretch;gap:6px;">
+                ${delen.map(j => `
+                  <span class="row" style="gap:7px;flex-wrap:wrap;">
+                    ${j.filament ? `<span class="fil-chip ${finishClass(j.filament.finish)}" style="background-color:${esc(j.filament.hex || "#888")};"></span>` : ``}
+                    <span>${j.qty}× ${esc(j.name)}${j.filament ? ` <span class="muted">— ${esc([j.filament.type, j.filament.name].filter(Boolean).join(" "))}</span>` : ``}</span>
+                    ${j.vereenvoudigd ? `<span class="sale-flag" title="Uit een vereenvoudigd model gehaald — snij dit stuk zelf uit het origineel">VEREENVOUDIGD</span>` : ``}
+                    ${jobFileButton(i, j)}
+                  </span>`).join("")}
+              </span>
+            </div>
+            <div class="detail-regel"><span class="sleutel">Levering</span><span class="waarde">${i.assembled ? "In elkaar gezet" : "Los, per onderdeel"}</span></div>
+            ${i.sliced === false ? `<div class="detail-regel"><span class="sleutel">Let op</span><span class="waarde" style="color:var(--accent);">Model was te zwaar om te snijden — prijs nakijken</span></div>` : ``}` : ``}
+        </div>` : ``}
+    </div>`;
 }
 
 /* De onderdelen van het beheer, in de volgorde waarin je ze nodig hebt. */
@@ -6689,6 +6759,12 @@ function attachAdminHandlers(){
     render();
   };
 
+  document.querySelectorAll('[data-regel]').forEach(b => {
+    b.onclick = () => {
+      state.__openRegel = state.__openRegel === b.dataset.regel ? null : b.dataset.regel;
+      render();
+    };
+  });
   document.querySelectorAll('[data-stapvak]').forEach(d => {
     d.addEventListener('toggle', () => {
       state.__openStappen = d.open ? d.dataset.stapvak : null;
