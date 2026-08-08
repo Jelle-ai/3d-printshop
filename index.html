@@ -270,6 +270,12 @@
   .slot-caret{color:var(--muted);flex-shrink:0;}
   .slot-body{padding:0 12px 12px;}
   /* korting */
+  /* de bestelling waar een link uit een bericht naartoe wees */
+  .order-card.aangewezen{
+    border-color:var(--accent);
+    box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+    transition:box-shadow .3s, border-color .3s;
+  }
   .sale-flag{
     display:inline-block;background:var(--accent);color:#fff;border-radius:999px;
     padding:2px 8px;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.06em;
@@ -597,6 +603,26 @@ function notify(msg){
   window.__toastTimer = setTimeout(()=>t.classList.add('hidden'), 3000);
 }
 
+const SITE_URL = location.origin + location.pathname;
+/* Links in een e-mail wijzen naar een plek in de shop, niet naar de voorpagina.
+   Alles zit achter een # zodat GitHub Pages er niets voor hoeft te kunnen. */
+const orderLink   = (o) => `${SITE_URL}#bestelling/${o.id}`;
+const confirmLink = (o) => `${SITE_URL}#ontvangen/${o.id}`;
+
+/* Leest zo'n link uit en onthoudt waar we naartoe moeten. Het adres wordt
+   daarna schoongeveegd, zodat herladen niet opnieuw dezelfde sprong maakt. */
+function leesLink(){
+  const h = decodeURIComponent(location.hash || "").replace(/^#/, "");
+  if (!h) return null;
+  const [wat, id] = h.split("/");
+  if (wat === "bestelling" && id) return { view: "account", orderId: id };
+  if (wat === "ontvangen" && id) return { view: "account", orderId: id, actie: "ontvangen" };
+  if (["account","archief","custom","cart","shop","verifieer"].includes(wat)) return { view: wat };
+  return null;
+}
+const __link = leesLink();
+if (__link) history.replaceState(null, "", SITE_URL);
+
 /* --------------------------- state --------------------------- */
 /* Waar iemand was toen hij herlaadde. Inloggen en betalen slaan we over: daar
    halverwege terugkomen helpt niemand. */
@@ -608,11 +634,15 @@ function bewaardeView(){
   }catch(e){}
   return null;
 }
-const __start = bewaardeView();
+const __start = __link || bewaardeView();
 
 let state = {
   view: __start?.view || "shop",
   selectedProductId: __start?.productId || null,
+  // waar de link uit de e-mail naartoe wees; wordt afgehandeld zodra de
+  // bestellingen binnen zijn
+  linkOrder: __link?.orderId || null,
+  linkActie: __link?.actie || null,
   products: [],
   productsLoaded: false,
   productsError: null,
@@ -729,11 +759,11 @@ async function doRegister(name, email, password, address){
     // Firebase stuurt zelf een bevestigingsmail; die is gratis en betrouwbaar.
     try{
       await sendEmailVerification(cred.user, { url: SITE_URL });
-      notify("Account aangemaakt — kijk in je mail om je adres te bevestigen");
+      go("verifieer");
     }catch(e){
       notify("Account aangemaakt — welkom " + name);
+      go("shop");
     }
-    go("shop");
   }catch(e){
     notify("Fout: " + (e.message || e));
   }finally{
@@ -971,6 +1001,11 @@ const DEFAULT_SLICER = {
 function slicerSettings(){ return { ...DEFAULT_SLICER, ...(pricing().slicer || {}) }; }
 const MAX_PARTS = 12;       // zoals bij PCBWay: twaalf onderdelen per opdracht
 function pricing(){ return { ...DEFAULT_PRICING, ...(state.pricing || {}) }; }
+
+/* De klant hoeft geen grammen, printminuten, volumes of driehoeken te zien —
+   die krijgt gewoon de prijs, en kiest kleur en materiaal. Voor de beheerder
+   staat alles er wél, want die heeft het nodig om te printen. */
+function toonTechniek(){ return !!state.profile?.isAdmin; }
 
 /* =====================================================================
    Slicen in de browser
@@ -1237,9 +1272,11 @@ function platePreview(sizeMm){
             fill="${col}" fill-opacity="0.30" stroke="${col}" stroke-width="2" rx="2"/>
       <text x="${pad}" y="${pad-9}" fill="#8B8F98" font-family="monospace" font-size="10">${PLATE.x} mm</text>
       <text x="${S-pad}" y="${pad-9}" fill="#8B8F98" font-family="monospace" font-size="10" text-anchor="end">${esc(PLATE.name)}</text>
-      <text x="${(px+pw/2).toFixed(1)}" y="${(py+pd/2+4).toFixed(1)}" fill="#F2F1ED" font-family="monospace" font-size="11" text-anchor="middle">${Math.round(w)} × ${Math.round(d)}</text>
+      ${toonTechniek() ? `<text x="${(px+pw/2).toFixed(1)}" y="${(py+pd/2+4).toFixed(1)}" fill="#F2F1ED" font-family="monospace" font-size="11" text-anchor="middle">${Math.round(w)} × ${Math.round(d)}</text>` : ``}
       <text x="${pad}" y="${S-9}" fill="${fits ? '#8B8F98' : '#FF6B35'}" font-family="monospace" font-size="10">
-        hoogte ${Math.round(h)} / ${PLATE.z} mm${fits ? "" : fitsZ ? " — past niet op de plaat" : " — te hoog"}
+        ${toonTechniek()
+          ? `hoogte ${Math.round(h)} / ${PLATE.z} mm${fits ? "" : fitsZ ? " — past niet op de plaat" : " — te hoog"}`
+          : fits ? "past op de plaat" : "past niet op de plaat"}
       </text>
     </svg>`;
 }
@@ -1917,11 +1954,49 @@ function listenOrders(){
       .map(d => ({ id:d.id, ...d.data() }))
       .sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
     state.ordersError = null;
+    volgLink();
     if (state.view === "account" || state.view === "admin") render();
   }, (err) => {
     state.ordersError = err;
     if (state.view === "account" || state.view === "admin") render();
   });
+}
+
+/* Staat de site al open wanneer iemand op een link in een bericht klikt, dan
+   herlaadt de pagina niet — er verandert alleen het adres. Daar luisteren we op,
+   anders gebeurt er niets. */
+window.addEventListener("hashchange", () => {
+  const l = leesLink();
+  if (!l) return;
+  history.replaceState(null, "", SITE_URL);
+  state.linkOrder = l.orderId || null;
+  state.linkActie = l.actie || null;
+  if (l.orderId) volgLink(); else go(l.view);
+});
+
+/* Kwam iemand binnen via een link uit een bericht, dan zetten we hem op de
+   juiste bestelling en brengen die in beeld. */
+function volgLink(){
+  if (!state.linkOrder) return;
+  const o = state.orders.find(x => x.id === state.linkOrder);
+  if (!o) return;                                  // bestelling nog niet binnen
+  state.__openOrder = o.id;
+  state.view = "account";
+  const actie = state.linkActie;
+  state.linkOrder = null; state.linkActie = null;
+  render();
+  // even wachten tot het scherm getekend is
+  setTimeout(() => {
+    const kaart = document.querySelector(`[data-order="${o.id}"]`);
+    if (kaart){
+      kaart.scrollIntoView({ behavior: "smooth", block: "center" });
+      kaart.classList.add("aangewezen");
+      setTimeout(() => kaart.classList.remove("aangewezen"), 2600);
+    }
+    if (actie === "ontvangen" && o.status === "Geleverd" && !o.receivedAt){
+      notify("Klik op Ontvangen om te bevestigen dat je pakket aangekomen is");
+    }
+  }, 120);
 }
 
 async function placeOrder(shippingCountry, address, payment){
@@ -1956,7 +2031,9 @@ async function placeOrder(shippingCountry, address, payment){
     state.__checkout = null;
     notify("Betaald met testgeld — bestelling geplaatst!");
     go("account");
-    mailBestelling({ id: ref.id, ...order });   // mag rustig achteraf komen
+    const geplaatst = { id: ref.id, ...order };
+    mailBestelling(geplaatst);          // mag rustig achteraf komen
+    mailNieuweBestelling(geplaatst);    // en een seintje naar de shop zelf
   }catch(e){ notify("Bestellen mislukt: " + e.message); }
 }
 /* Opruimen zonder iets kwijt te raken: een bestelling krijgt een vlaggetje en
@@ -1995,10 +2072,17 @@ const DEFAULT_MAIL = {
   serviceId: "", publicKey: "",
   tplOrder: "", tplShipped: "", tplDelivered: "",
   fromName: "LayerCraft", replyTo: "",
+  // Elk bericht kost één van je maandelijkse tegoed. Zet uit wat je niet nodig
+  // hebt, dan haal je meer bestellingen uit hetzelfde pakket.
+  onOrder: true, onShipped: true, onDelivered: true,
+  // een seintje naar jezelf zodra er iets binnenkomt
+  tplAdmin: "", adminEmail: "", onNewOrder: true,
 };
 function mailSettings(){ return { ...DEFAULT_MAIL, ...(state.mail || {}) }; }
+const MAIL_SWITCH = { tplOrder: "onOrder", tplShipped: "onShipped", tplDelivered: "onDelivered", tplAdmin: "onNewOrder" };
 function mailReady(k){
   const m = mailSettings();
+  if (MAIL_SWITCH[k] && m[MAIL_SWITCH[k]] === false) return false;
   return !!(m.serviceId && m.publicKey && m[k]);
 }
 function listenMail(){
@@ -2034,7 +2118,6 @@ async function sendMail(tplKey, params){
   }
 }
 
-const SITE_URL = location.origin + location.pathname;
 
 /* De bestelling als leesbare regels, want een e-mail heeft geen opmaak nodig
    om duidelijk te zijn. */
@@ -2066,12 +2149,30 @@ function mailOrderParams(o){
 /* Elk bericht krijgt zijn eigen kop, inleiding en knop mee. Zo kun je met één
    sjabloon toe voor alle drie de momenten — het gratis pakket van EmailJS geeft
    er maar een paar. Wie wil, vult gewoon drie verschillende sjablonen in. */
+/* Een seintje naar de shop zelf: er is een bestelling binnen. Gaat naar het
+   adres dat je opgeeft, of anders naar je antwoordadres. */
+async function mailNieuweBestelling(o){
+  const m = mailSettings();
+  const naar = (m.adminEmail || m.replyTo || "").trim();
+  if (!naar) return;
+  const r = await sendMail("tplAdmin", {
+    ...mailOrderParams(o),
+    to_email: naar,
+    to_name: m.fromName || "shop",
+    mail_title: `Nieuwe bestelling ${orderNumber(o)}`,
+    mail_intro: `${o.userEmail} heeft zonet besteld voor ${fmtEUR(o.total ?? 0)}. Hieronder staat wat er geprint moet worden.`,
+    action_url: orderLink(o),
+    action_label: "Openen in de shop",
+  });
+  if (!r.ok && r.reason !== "niet ingesteld") console.warn("seintje niet verstuurd:", r.reason);
+}
+
 async function mailBestelling(o){
   const r = await sendMail("tplOrder", {
     ...mailOrderParams(o),
     mail_title: "Bedankt voor je bestelling",
     mail_intro: "We hebben je bestelling goed ontvangen en gaan ermee aan de slag. Hieronder staat wat je besteld hebt.",
-    action_url: SITE_URL,
+    action_url: orderLink(o),
     action_label: "Bekijk je bestelling",
   });
   if (!r.ok && r.reason !== "niet ingesteld") console.warn("bevestigingsmail niet verstuurd:", r.reason);
@@ -2083,7 +2184,7 @@ async function mailVerzonden(o){
     delivery_from: fmtDate(w.from), delivery_to: fmtDate(w.to),
     mail_title: "Je bestelling is onderweg",
     mail_intro: `Je pakket is vertrokken. We verwachten het tussen ${fmtDate(w.from)} en ${fmtDate(w.to)} bij je.`,
-    action_url: SITE_URL,
+    action_url: orderLink(o),
     action_label: "Volg je bestelling",
   });
   if (!r.ok && r.reason !== "niet ingesteld") notify("Verzendmail niet verstuurd: " + r.reason);
@@ -2092,10 +2193,10 @@ async function mailGeleverd(o){
   const r = await sendMail("tplDelivered", {
     ...mailOrderParams(o),
     // hier klikt de klant op om de ontvangst te bevestigen
-    confirm_url: SITE_URL,
+    confirm_url: confirmLink(o),
     mail_title: "Is je pakket aangekomen?",
     mail_intro: "Volgens ons is je bestelling geleverd. Klopt dat? Laat het ons even weten met de knop hieronder, dan weten wij dat het goed is aangekomen.",
-    action_url: SITE_URL,
+    action_url: confirmLink(o),
     action_label: "Ja, ontvangen",
   });
   if (!r.ok && r.reason !== "niet ingesteld") notify("Ontvangstmail niet verstuurd: " + r.reason);
@@ -2273,7 +2374,8 @@ function render(){
     case "checkout": app.innerHTML = viewCheckout(); attachCheckoutHandlers(); return;
     case "payment": app.innerHTML = viewPayment(); attachPaymentHandlers(); return;
     case "login": app.innerHTML = viewAuth(state.__authMode || "login"); attachAuthHandlers(); return;
-    case "account": app.innerHTML = viewAccount(); attachShopHandlers(); attachVerifyHandlers(); return;
+    case "account": app.innerHTML = viewAccount(); attachShopHandlers(); return;
+    case "verifieer": app.innerHTML = viewVerifieer(); attachVerifyHandlers(); return;
     case "archief": app.innerHTML = viewArchief(); attachArchiefHandlers(); return;
     case "admin": app.innerHTML = viewAdmin(); attachAdminHandlers(); return;
   }
@@ -2429,8 +2531,9 @@ function priceBreakdown(est){
         <span class="font-display" style="font-size:14px;">Berekende prijs</span>
         <span class="price" style="font-size:22px;">${fmtEUR(est.unit)}</span>
       </div>
-      <div class="kv"><span>Filament</span><span class="font-mono">${est.grams.toFixed(1)} g · ${fmtEUR(est.materialCost)}</span></div>
-      <div class="kv"><span>Printtijd</span><span class="font-mono">${fmtDuration(est.seconds)} · ${fmtEUR(est.machineCost)}</span></div>
+      ${toonTechniek() ? `
+        <div class="kv"><span>Filament</span><span class="font-mono">${est.grams.toFixed(1)} g · ${fmtEUR(est.materialCost)}</span></div>
+        <div class="kv"><span>Printtijd</span><span class="font-mono">${fmtDuration(est.seconds)} · ${fmtEUR(est.machineCost)}</span></div>` : ``}
       <div class="kv"><span>Voorbereiding</span><span class="font-mono">${fmtEUR(pricing().setupFee)}</span></div>
       <p class="muted" style="font-size:11px;margin:8px 0 0;">
         Automatisch berekend uit het volume en de printtijd. Bij een bijzondere vorm die veel steunmateriaal vraagt, kan de shop dit nog bijstellen.
@@ -2691,8 +2794,8 @@ function viewProduct(){
     ["Infill", p.infill],
     ["Laaghoogte", p.layerHeight],
     ["Kleur", chosen ? chosen.name : p.color],
-    ["Afmetingen", p.dimensions],
-    ["Printtijd", p.printTime],
+    ["Afmetingen", toonTechniek() ? p.dimensions : null],
+    ["Printtijd", toonTechniek() ? p.printTime : null],
     ["Gewicht", p.weight ? p.weight + " g" : ""],
   ].filter(([,v]) => v !== undefined && v !== null && String(v).trim() !== "")
    .map(([k,v]) => `<div class="spec"><span class="label">${esc(k)}</span>${esc(v)}</div>`).join("");
@@ -3168,42 +3271,55 @@ function partCard(p){
               </p>` : ``}
           </div>
           <div>
-            <div class="kv"><span>Afmetingen</span><span class="font-mono">${size.map(v=>Math.round(v)).join(" × ")} mm</span></div>
-            <div class="kv"><span>Volume</span><span class="font-mono">${(p.geo.volume * Math.pow(partFactor(p),3) / 1000).toFixed(1)} cm³</span></div>
-            <div class="kv"><span>Driehoeken</span><span class="font-mono">${p.geo.triangles.toLocaleString('nl-BE')}</span></div>
+            ${toonTechniek() ? `
+              <div class="kv"><span>Afmetingen</span><span class="font-mono">${size.map(v=>Math.round(v)).join(" × ")} mm</span></div>
+              <div class="kv"><span>Volume</span><span class="font-mono">${(p.geo.volume * Math.pow(partFactor(p),3) / 1000).toFixed(1)} cm³</span></div>
+              <div class="kv"><span>Driehoeken</span><span class="font-mono">${p.geo.triangles.toLocaleString('nl-BE')}</span></div>` : ``}
 
-            <div class="form-grid" style="margin-top:12px;">
-              <div>
-                <label class="field-label">Eenheid in bestand</label>
-                <select class="field" data-field="unit">
-                  ${Object.keys(UNITS).map(u=>`<option ${u===p.unit?'selected':''}>${u}</option>`).join("")}
-                </select>
+            ${toonTechniek() ? `
+              <div class="form-grid" style="margin-top:12px;">
+                <div>
+                  <label class="field-label">Eenheid in bestand</label>
+                  <select class="field" data-field="unit">
+                    ${Object.keys(UNITS).map(u=>`<option ${u===p.unit?'selected':''}>${u}</option>`).join("")}
+                  </select>
+                </div>
+                <div>
+                  <label class="field-label">Aantal</label>
+                  <input type="number" min="1" max="999" data-field="qty" value="${p.qty}" />
+                </div>
               </div>
-              <div>
+              <label class="field-label">Schaal — ${p.scale}%</label>
+              <input type="range" data-field="scale" min="25" max="300" step="5" value="${p.scale}" style="width:100%;margin-bottom:12px;" />`
+            : `
+              <div style="max-width:150px;margin-top:12px;">
                 <label class="field-label">Aantal</label>
                 <input type="number" min="1" max="999" data-field="qty" value="${p.qty}" />
+              </div>`}
+
+            <label class="field-label">Materiaal en kleur</label>
+            <div class="fil-types">
+              ${types.map(ty=>`<button class="fil-type ${ty===activeType?'active':''}" data-parttype="${esc(p.id)}" data-type="${esc(ty)}">${esc(ty)}</button>`).join("")}
+            </div>
+            <div class="swatches">
+              ${colors.map(f=>`
+                <button class="swatch ${finishClass(f.finish)} ${f.id===fil?.id?'active':''}"
+                        data-partfil="${esc(p.id)}" data-fil="${esc(f.id)}" title="${esc(f.name)} — ${esc(f.hex)}"
+                        style="background-color:${esc(f.hex)};">
+                  ${f.id===fil?.id ? `<span class="tick" style="color:${esc(readableOn(f.hex))}"><i class="fa-solid fa-check" aria-hidden="true"></i></span>` : ``}
+                </button>`).join("")}
+            </div>
+            <div class="fil-chosen" style="margin-bottom:12px;">
+              <div class="fil-chip ${finishClass(fil?.finish)}" style="background-color:${esc(fil?.hex || '#888')};"></div>
+              <div style="min-width:0;">
+                <div style="font-size:14px;">${esc(fil?.name || "—")}</div>
+                <div class="muted font-mono" style="font-size:11px;">
+                  ${esc(fil?.type || "")}${fil ? " · " + esc(FILAMENT_FINISHES[fil.finish] || fil.finish) : ""}${fil ? " · " + esc(fil.hex.toUpperCase()) : ""}
+                </div>
               </div>
             </div>
 
-            <label class="field-label">Schaal — ${p.scale}%</label>
-            <input type="range" data-field="scale" min="25" max="300" step="5" value="${p.scale}" style="width:100%;margin-bottom:12px;" />
-
             <div class="form-grid">
-              <div>
-                <label class="field-label">Materiaal</label>
-                <select class="field" data-field="filtype">
-                  ${types.map(ty=>`<option ${ty===activeType?'selected':''}>${esc(ty)}</option>`).join("")}
-                </select>
-              </div>
-              <div>
-                <label class="field-label">Kleur</label>
-                <div class="row" style="gap:8px;">
-                  <span class="fil-chip ${finishClass(fil?.finish)}" style="width:34px;height:34px;border-radius:9px;background-color:${esc(fil?.hex || '#888')};flex-shrink:0;"></span>
-                  <select class="field" data-field="filament" style="margin-bottom:10px;">
-                    ${colors.map(f=>`<option value="${esc(f.id)}" ${f.id===fil?.id?'selected':''}>${esc(f.name)}</option>`).join("")}
-                  </select>
-                </div>
-              </div>
               <div>
                 <label class="field-label">Infill</label>
                 <select class="field" data-field="infill">
@@ -3221,7 +3337,7 @@ function partCard(p){
             ${est ? `
               <div class="part-price">
                 <div>
-                  <div class="muted font-mono" style="font-size:10px;">${est.grams.toFixed(1)} g · ${fmtDuration(est.seconds)} · per stuk</div>
+                  ${toonTechniek() ? `<div class="muted font-mono" style="font-size:10px;">${est.grams.toFixed(1)} g · ${fmtDuration(est.seconds)} · per stuk</div>` : `<div class="muted font-mono" style="font-size:10px;">per stuk</div>`}
                   <div class="price" style="font-size:19px;">${fmtEUR(est.unit)}</div>
                 </div>
                 ${p.qty > 1 ? `<div style="text-align:right;">
@@ -3242,8 +3358,9 @@ function projectSummary(t, canAssemble){
 
       <div class="kv"><span>Onderdelen</span><span class="font-mono">${t.parts}</span></div>
       <div class="kv"><span>Totaal aantal</span><span class="font-mono">${t.qty}</span></div>
-      <div class="kv"><span>Filament</span><span class="font-mono">${t.grams.toFixed(0)} g</span></div>
-      <div class="kv"><span>Printtijd</span><span class="font-mono">${fmtDuration(t.seconds)}</span></div>
+      ${toonTechniek() ? `
+        <div class="kv"><span>Filament</span><span class="font-mono">${t.grams.toFixed(0)} g</span></div>
+        <div class="kv"><span>Printtijd</span><span class="font-mono">${fmtDuration(t.seconds)}</span></div>` : ``}
 
       ${canAssemble ? `
         <label class="checkbox-row" style="margin:14px 0 4px;align-items:flex-start;">
@@ -3421,6 +3538,27 @@ function attachCustomHandlers(){
     render();
     await analyseerWachtende();
   };
+
+  document.querySelectorAll('[data-parttype]').forEach(btn=>{
+    btn.onclick = () => {
+      const part = (state.parts || []).find(p => p.id === btn.dataset.parttype);
+      if (!part) return;
+      // eerste kleur van het nieuwe type kiezen; de rest volgt daaruit
+      const eerste = availableFilaments(null).find(f => f.type === btn.dataset.type);
+      if (eerste) part.filamentId = eerste.id;
+      bewaarOpdracht();
+      render();
+    };
+  });
+  document.querySelectorAll('[data-partfil]').forEach(btn=>{
+    btn.onclick = () => {
+      const part = (state.parts || []).find(p => p.id === btn.dataset.partfil);
+      if (!part) return;
+      part.filamentId = btn.dataset.fil;
+      bewaarOpdracht();
+      render();
+    };
+  });
 
   document.querySelectorAll('.kalibreer').forEach(btn=>{
     btn.onclick = async () => {
@@ -3952,7 +4090,7 @@ function orderCard(o){
     </div>`).join("");
   const a = o.shippingAddress || {};
   return `
-    <div class="order-card" style="margin-bottom:12px;">
+    <div class="order-card" data-order="${esc(o.id)}" style="margin-bottom:12px;">
       <div class="between" style="margin-bottom:2px;">
         <span class="font-mono" style="font-size:12px;">${esc(orderNumber(o))}</span>
         <span class="badge${o.receivedAt ? " badge-accent" : ""}">${o.receivedAt ? "Ontvangen" : esc(o.status)}</span>
@@ -3982,22 +4120,36 @@ function orderCard(o){
     </div>`;
 }
 
-/* Zolang het e-mailadres niet bevestigd is, staat er een balkje met de kans
-   om de mail opnieuw te laten sturen. */
-function verifyNotice(){
+/* Meteen na het aanmaken van een account: één scherm dat vraagt om de link in
+   de e-mail aan te klikken. Daarna komt de shop er niet meer op terug. */
+function viewVerifieer(){
   const u = state.user;
-  if (!u || u.emailVerified) return "";
+  if (!u) return `<div style="padding:32px 0;"><p class="muted">Je bent niet ingelogd.</p></div>`;
+  if (u.emailVerified) return `
+    <div style="padding:48px 0;max-width:440px;margin:0 auto;text-align:center;">
+      <p style="font-size:34px;margin:0 0 10px;color:var(--accent);">${ic("circle-check")}</p>
+      <h1 class="font-display" style="font-size:22px;margin:0 0 8px;">Je adres is bevestigd</h1>
+      <p class="muted" style="font-size:14px;margin:0 0 20px;">Alles staat klaar. Veel plezier.</p>
+      <button class="btn btn-accent" onclick="go('shop')">Naar de shop</button>
+    </div>`;
   return `
-    <div class="cart-item" style="border-color:var(--accent);margin:14px 0;">
-      <p style="font-size:13px;margin:0 0 6px;font-weight:600;">${ic("envelope")} Bevestig je e-mailadres</p>
-      <p class="muted" style="font-size:12px;margin:0 0 10px;">
-        We stuurden een bericht naar ${esc(u.email || "")}. Klik op de link erin, zodat we zeker weten
-        dat we je op dit adres kunnen bereiken over je bestellingen.
+    <div style="padding:48px 0;max-width:440px;margin:0 auto;text-align:center;">
+      <p style="font-size:34px;margin:0 0 10px;color:var(--accent);">${ic("envelope")}</p>
+      <h1 class="font-display" style="font-size:22px;margin:0 0 10px;">Klik op de link in je e-mail</h1>
+      <p style="font-size:15px;line-height:1.6;margin:0 0 6px;">
+        We stuurden zonet een bericht naar <strong>${esc(u.email || "")}</strong>.
       </p>
-      <div class="row">
+      <p class="muted" style="font-size:13px;line-height:1.6;margin:0 0 24px;">
+        Klik op de link erin om je adres te bevestigen. Zo weten we zeker dat we je kunnen
+        bereiken over je bestelling. Niets gekregen? Kijk even bij je ongewenste post.
+      </p>
+      <div class="row" style="justify-content:center;">
         <button class="btn btn-ghost btn-sm" id="resendVerifyBtn">Opnieuw sturen</button>
-        <button class="btn btn-ghost btn-sm" id="checkVerifyBtn">Ik heb geklikt</button>
+        <button class="btn btn-accent btn-sm" id="checkVerifyBtn">Ik heb geklikt</button>
       </div>
+      <p class="muted" style="font-size:12px;margin:22px 0 0;">
+        <button class="detail-toggle" onclick="go('shop')" style="margin:0;">Later doen, naar de shop</button>
+      </p>
     </div>`;
 }
 function attachVerifyHandlers(){
@@ -4006,12 +4158,13 @@ function attachVerifyHandlers(){
     opnieuw.disabled = true;
     try{ await sendEmailVerification(state.user, { url: SITE_URL }); notify("Bericht opnieuw verstuurd"); }
     catch(e){ notify("Versturen mislukt: " + (e.message || e)); opnieuw.disabled = false; }
+    setTimeout(() => { opnieuw.disabled = false; }, 4000);
   };
   const na = document.getElementById('checkVerifyBtn');
   if (na) na.onclick = async () => {
     try{
       await reload(state.user);
-      if (state.user.emailVerified){ notify("Bedankt — je adres is bevestigd"); render(); }
+      if (state.user.emailVerified) render();
       else notify("Nog niet bevestigd — klik eerst op de link in de mail");
     }catch(e){ notify("Nakijken mislukt: " + (e.message || e)); }
   };
@@ -4033,7 +4186,6 @@ function viewAccount(){
       ${state.profile?.isAdmin ? `<span class="badge badge-accent">Beheerder</span>` : ``}
       ${a.street ? `<p class="muted" style="font-size:12px;margin:8px 0 0;">${esc(a.street)}, ${esc(a.zip||'')} ${esc(a.city||'')}</p>` : ``}
       ${state.profileError ? `<p class="muted" style="font-size:12px;margin-top:8px;color:var(--accent);">Je profielgegevens konden niet geladen worden — je blijft wel ingelogd.</p>` : ``}
-      ${verifyNotice()}
       ${state.ordersError ? `
         <div class="cart-item" style="border-color:var(--accent);margin-top:14px;">
           <p style="font-size:13px;margin:0 0 6px;color:var(--accent);font-weight:600;">Je bestellingen konden niet geladen worden</p>
@@ -4229,7 +4381,7 @@ function viewAdmin(){
       ${o.items.map(i=>`
         <div class="row" style="gap:7px;font-size:13px;margin-bottom:3px;">
           ${i.filament ? `<span class="fil-chip ${finishClass(i.filament.finish)}" style="width:13px;height:13px;border-radius:4px;background-color:${esc(i.filament.hex)};flex-shrink:0;"></span>` : ``}
-          <span style="min-width:0;">${i.qty}× ${esc(i.name)}${i.filament ? ` <span class="muted font-mono" style="font-size:10px;">${esc(i.filament.type)} · ${esc(i.filament.name)}</span>` : ``}${i.dims ? ` <span class="muted font-mono" style="font-size:10px;">${esc(i.dims.join(" × "))} mm</span>` : ``}${i.grams ? ` <span class="muted font-mono" style="font-size:10px;">≈${esc(i.grams)}g · ${esc(fmtDuration(i.printTime||0))}</span>` : ``}</span>
+          <span style="min-width:0;">${i.qty}× ${esc(i.name)}${i.filament ? ` <span class="muted font-mono" style="font-size:10px;">${esc(i.filament.type)} · ${esc(i.filament.name)}</span>` : ``}${i.dims ? ` <span class="muted font-mono" style="font-size:10px;">${esc(i.dims.join(" × "))} mm</span>` : ``}${i.grams && toonTechniek() ? ` <span class="muted font-mono" style="font-size:10px;">≈${esc(i.grams)}g · ${esc(fmtDuration(i.printTime||0))}</span>` : ``}</span>
         </div>
         ${Array.isArray(i.jobParts) && i.jobParts.length ? `
           <div style="margin:2px 0 8px 20px;">
@@ -4619,6 +4771,8 @@ const MAIL_FIELDS = [
   ["tplOrder",    "Sjabloon: bestelbevestiging", "template_xxxxxxx"],
   ["tplShipped",  "Sjabloon: verzonden", "template_xxxxxxx"],
   ["tplDelivered","Sjabloon: geleverd, graag bevestigen", "template_xxxxxxx"],
+  ["tplAdmin",    "Sjabloon: seintje naar jezelf", "template_xxxxxxx"],
+  ["adminEmail",  "Jouw adres voor het seintje", "jelle@mattan.be"],
   ["fromName",    "Afzendernaam", "LayerCraft"],
   ["replyTo",     "Antwoordadres", "jelle@mattan.be"],
 ];
@@ -4648,6 +4802,17 @@ function mailAdminBlock(){
             <input class="mailfield" data-key="${k}" placeholder="${esc(ph)}" value="${esc(m[k] || "")}" />
           </div>`).join("")}
       </div>
+
+      <p class="muted" style="font-size:11px;margin:12px 0 8px;max-width:65ch;">
+        Welke berichten mogen vertrekken? Elk bericht kost één van je maandelijkse
+        tegoed. Alles aan is drie per bestelling; zet je er twee uit, dan haal je
+        driemaal zoveel bestellingen uit hetzelfde pakket.
+      </p>
+      ${[["onOrder","Bevestiging naar de klant na het bestellen"],
+         ["onShipped","Bericht wanneer je op Verzonden zet"],
+         ["onDelivered","Vraag om ontvangst te bevestigen bij Geleverd"],
+         ["onNewOrder","Seintje naar jezelf bij elke nieuwe bestelling"]].map(([k,label])=>`
+        <label class="checkbox-row"><input type="checkbox" class="mailswitch" data-key="${k}" style="width:auto;margin:0;" ${m[k] !== false ? 'checked' : ''} /> ${esc(label)}</label>`).join("")}
       <p class="muted" style="font-size:11px;margin:8px 0 0;max-width:65ch;">
         Het gratis pakket van EmailJS geeft maar een paar sjablonen. Dat hoeft niet te knellen:
         elk bericht stuurt zijn eigen <span class="font-mono">mail_title</span>,
@@ -4722,6 +4887,7 @@ function attachPricingHandlers(){
   const mailUit = () => {
     const uit = { ...mailSettings() };
     document.querySelectorAll('.mailfield').forEach(el => { uit[el.dataset.key] = el.value.trim(); });
+    document.querySelectorAll('.mailswitch').forEach(el => { uit[el.dataset.key] = el.checked; });
     return uit;
   };
   const test = document.getElementById('testMailBtn');
