@@ -1638,12 +1638,13 @@ async function placeOrder(shippingCountry, address, payment){
   const order = {
     uid: state.user.uid,
     userEmail: state.user.email,
-    items: state.cart.map(({id,productId,kind,name,price,qty,filament,dims,printTime,grams,jobParts,assembled,uploadId})=>({
+    items: state.cart.map(({id,productId,kind,name,price,qty,filament,dims,printTime,grams,jobParts,assembled,uploadId,sliced})=>({
       id, productId: productId || id, kind, name, price, qty,
       filament: filament || null, dims: dims || null,
       printTime: printTime || null, grams: grams || null,
       jobParts: jobParts || null, assembled: assembled || false,
       uploadId: uploadId || null,
+      sliced: sliced === undefined ? null : !!sliced,
     })),
     shippingCountry, shippingAddress: address,
     shippingCost: rate.price,
@@ -2754,14 +2755,19 @@ function projectSummary(t, canAssemble){
               ${t.parts === 0 || t.pending ? 'disabled style="width:100%;opacity:.5;"' : ''}>
         ${t.pending
           ? `<i class="fa-solid fa-spinner" aria-hidden="true"></i> Bezig met analyseren…`
-          : pricing().sliceRequired
+          : pricing().sliceRequired && bridgeAlive() !== false
           ? `<i class="fa-solid fa-calculator" aria-hidden="true"></i> Exacte prijs berekenen`
           : `<i class="fa-solid fa-cart-plus" aria-hidden="true"></i> Toevoegen aan winkelwagen`}
       </button>
-      ${pricing().sliceRequired ? `<p class="muted" style="font-size:11px;margin:8px 0 0;">
-        Bovenstaand bedrag is een richtprijs. Wij halen je model door Bambu Studio en
-        rekenen af op de werkelijke printtijd en het werkelijke gewicht.
-      </p>` : ``}
+      ${pricing().sliceRequired ? (bridgeAlive() === false
+        ? `<p class="muted" style="font-size:11px;margin:8px 0 0;">
+             De werkplaats is nu offline, dus rekenen we met bovenstaande berekening.
+             Wij slicen je model alsnog na en nemen contact op als het merkbaar afwijkt.
+           </p>`
+        : `<p class="muted" style="font-size:11px;margin:8px 0 0;">
+             Bovenstaand bedrag is een richtprijs. Wij halen je model door Bambu Studio en
+             rekenen af op de werkelijke printtijd en het werkelijke gewicht.
+           </p>`) : ``}
       ${t.failed ? `<p class="muted" style="font-size:11px;margin:8px 0 0;color:var(--accent);">
         ${t.failed} bestand${t.failed > 1 ? 'en' : ''} kon niet gelezen worden en telt niet mee.
       </p>` : ``}
@@ -2823,6 +2829,7 @@ async function probeStorage(){
 }
 
 function attachCustomHandlers(){
+  listenBridge();          // weten of de werkplaats meedraait, vóór er iemand wacht
   attachMeshViewers();
   probeStorage();
   const input = document.getElementById('fileInput');
@@ -2931,7 +2938,11 @@ async function addJobToCart(btn){
   const ready = (state.parts || []).filter(p => p.geo);
   if (!ready.length){ notify("Nog geen bruikbaar onderdeel"); return; }
   const t = projectTotals();
-  const wantSlice = !!pricing().sliceRequired;
+  // Slaapt de werkplaats-PC, dan heeft wachten geen zin: de klant krijgt onze
+  // eigen berekening en mag meteen door. De opdracht blijft wel op "teslicen"
+  // staan, zodat de brug hem alsnog doorrekent zodra hij weer draait.
+  const sliceOn = !!pricing().sliceRequired;
+  const wantSlice = sliceOn && bridgeAlive() !== false;
 
   btn.disabled = true;
   const totalBytes = ready.reduce((s, p) => s + p.fileSize, 0);
@@ -3016,7 +3027,8 @@ async function addJobToCart(btn){
         seconds: est ? Math.round(est.seconds) : null,
         unitPrice: est ? est.unit : null,
         // De brug op de werkplaats-PC pikt dit op en vult de echte cijfers in.
-        ...(wantSlice ? { slice: { status: "wachten" } } : {}),
+        // Ook als hij nu niet draait: dan gebeurt het zodra hij weer opstart.
+        ...(sliceOn ? { slice: { status: "wachten" } } : {}),
       });
     }
 
@@ -3025,11 +3037,12 @@ async function addJobToCart(btn){
       parts: uploaded,
       assembled: !!state.assembled && t.assembly > 0,
       notes: state.projectNotes || "",
-      status: wantSlice ? "teslicen" : "klaar",
+      status: sliceOn ? "teslicen" : "klaar",
       totals: {
         parts: t.parts, qty: t.qty, grams: +t.grams.toFixed(1),
         seconds: Math.round(t.seconds), subtotal: +t.subtotal.toFixed(2),
         discountPct: t.pct, assembly: +t.assembly.toFixed(2), total: +t.total.toFixed(2),
+        sliced: false,
       },
       createdAt: Date.now(),
     });
@@ -3054,12 +3067,14 @@ async function addJobToCart(btn){
         : `Eigen opdracht — ${uploaded.length} onderdelen`,
       price: Math.round(t.total * 100) / 100,
       qty: 1,
+      sliced: false,
       jobParts: uploaded.map((u, i) => ({
         name: u.name, qty: u.qty, filament: u.filament,
         fileName: u.fileName, index: i, storage: u.storage, storageUrl: u.storageUrl,
       })),
       assembled: !!state.assembled && t.assembly > 0,
     });
+    if (sliceOn) notify("De werkplaats is nu offline — je krijgt onze berekende prijs");
 
     state.parts = [];
     state.assembled = false;
@@ -3475,7 +3490,10 @@ function viewAdmin(){
                 <span class="muted">${j.qty}× ${esc(j.name)}${j.filament ? ` — ${esc(j.filament.type)} ${esc(j.filament.name)}` : ``}</span>
                 ${jobFileButton(i, j)}
               </div>`).join("")}
-            <div class="muted font-mono" style="font-size:10px;margin-top:3px;">${i.assembled ? "GEASSEMBLEERD LEVEREN" : "LOS LEVEREN"}</div>
+            <div class="muted font-mono" style="font-size:10px;margin-top:3px;">
+              ${i.assembled ? "GEASSEMBLEERD LEVEREN" : "LOS LEVEREN"}
+              ${i.sliced === true ? ` · PRIJS UIT DE SLICE` : i.sliced === false ? ` · <span style="color:var(--accent);">PRIJS IS EEN SCHATTING — NAKIJKEN</span>` : ``}
+            </div>
           </div>` : ``}`).join("")}
       <div class="order-foot font-mono" style="font-size:11px;">
         <span class="muted addr">${esc(o.shippingAddress?.street||'')}, ${esc(o.shippingAddress?.zip||'')} ${esc(o.shippingAddress?.city||'')}, ${esc(o.shippingCountry||'')}</span>
@@ -3803,8 +3821,17 @@ function listenBridge(){
   if (bridgeUnsub) return;
   bridgeUnsub = onSnapshot(doc(db, "meta", "slicebrug"), snap => {
     state.bridge = snap.exists() ? snap.data() : null;
-    if (state.view === "admin") render();
-  }, () => {});
+    state.bridgeLoaded = true;
+    if (state.view === "admin" || state.view === "custom") render();
+  }, () => { state.bridgeLoaded = true; });
+}
+/* Draait de brug op dit moment mee? Zolang we het nog niet weten geven we geen
+   antwoord: dan wachten we liever even dan dat we onterecht een schatting
+   doorrekenen. */
+function bridgeAlive(){
+  if (!state.bridgeLoaded) return null;
+  const seen = state.bridge?.lastSeen;
+  return !!seen && (Date.now() - seen) < 180000;   // klopt elke minuut; drie gemist = weg
 }
 function bridgeStatus(){
   const b = state.bridge;
