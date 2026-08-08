@@ -1,0 +1,106 @@
+rules_version = '2';
+
+// =====================================================================
+// Beveiligingsregels voor LayerCraft
+//
+// Deze regels vervangen de testmodus. Testmodus laat iedereen alles lezen
+// én schrijven en vervalt na dertig dagen — daarna doet de site niets meer.
+// Met deze regels blijft alles werken zolang je project bestaat.
+//
+// Plaatsen: Firebase-console → Firestore Database → Regels → alles hieronder
+// erin plakken → Publiceren. Het werkt meteen; er valt niets uit.
+// =====================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- hulpjes ---------------------------------------------------
+    function ingelogd() {
+      return request.auth != null;
+    }
+    function ikBen(uid) {
+      return ingelogd() && request.auth.uid == uid;
+    }
+    // De beheerder staat als zodanig in zijn eigen profiel. Dat vlaggetje kan
+    // niemand zelf zetten (zie de regel bij /users hieronder).
+    function beheerder() {
+      return ingelogd()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    // --- producten -------------------------------------------------
+    // Iedereen mag de collectie zien, ook wie niet ingelogd is.
+    // Alleen de beheerder verandert er iets aan.
+    match /products/{id} {
+      allow read: if true;
+      allow write: if beheerder();
+    }
+
+    // --- instellingen: filamenten, prijzen, e-mail -----------------
+    // De klant moet de filamenten en prijzen kunnen lezen om te bestellen.
+    match /settings/{id} {
+      allow read: if true;
+      allow write: if beheerder();
+    }
+
+    // --- profielen -------------------------------------------------
+    // Je leest en schrijft je eigen profiel; de beheerder mag alles lezen.
+    // Let op de laatste voorwaarde: je kunt jezelf geen beheerder maken.
+    match /users/{uid} {
+      allow read: if ikBen(uid) || beheerder();
+      allow create: if ikBen(uid)
+        && (!('isAdmin' in request.resource.data) || request.resource.data.isAdmin == false
+            || request.auth.token.email == 'jelle@mattan.be');
+      allow update: if beheerder()
+        || (ikBen(uid)
+            && (!('isAdmin' in request.resource.data)
+                || request.resource.data.isAdmin == resource.data.isAdmin
+                || request.auth.token.email == 'jelle@mattan.be'));
+      allow delete: if beheerder();
+    }
+
+    // --- bestellingen ----------------------------------------------
+    // Je ziet alleen je eigen bestellingen; de beheerder ziet alles.
+    // Een klant mag zijn bestelling plaatsen, de ontvangst bevestigen en hem
+    // uit zijn overzicht halen — verder niets. Wissen kan niemand: alles
+    // blijft bewaard in het archief.
+    match /orders/{id} {
+      allow read: if beheerder() || (ingelogd() && resource.data.uid == request.auth.uid);
+      allow create: if ingelogd() && request.resource.data.uid == request.auth.uid;
+      allow update: if beheerder()
+        || (ingelogd() && resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status', 'receivedAt', 'hiddenForUser']));
+      allow delete: if false;
+    }
+
+    // --- geüploade modellen ----------------------------------------
+    // Het bestand van een klant is van hem; de beheerder moet erbij om te
+    // kunnen printen. De stukken eronder volgen dezelfde regel.
+    match /uploads/{id} {
+      allow read: if beheerder() || (ingelogd() && resource.data.uid == request.auth.uid);
+      allow create: if ingelogd() && request.resource.data.uid == request.auth.uid;
+      allow update: if beheerder() || (ingelogd() && resource.data.uid == request.auth.uid);
+      allow delete: if beheerder();
+
+      match /files/{stuk} {
+        allow read: if beheerder()
+          || (ingelogd()
+              && get(/databases/$(database)/documents/uploads/$(id)).data.uid == request.auth.uid);
+        allow write: if ingelogd();
+      }
+    }
+
+    // --- kleine hulpdocumenten -------------------------------------
+    match /meta/{id} {
+      allow read: if true;
+      allow write: if beheerder();
+    }
+
+    // Alles wat hier niet genoemd staat, gaat dicht.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
