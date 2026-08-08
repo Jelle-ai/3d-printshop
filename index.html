@@ -1772,6 +1772,110 @@ function nearestFilament(hex){
   return best;
 }
 
+/* =====================================================================
+   3D-voorbeeld bij een product
+   Je zet er zelf het model bij dat je verkoopt; de klant kan het draaien en
+   ziet het in de kleur die hij kiest. Het model wordt eerst uitgedund en
+   daarna per punt teruggebracht tot twee bytes: nauwkeurig genoeg om naar te
+   kijken, klein genoeg om naast het product te bewaren. Bestaat een model uit
+   meerdere objecten, dan hoort object 1 bij kleurvak 1, object 2 bij vak 2 —
+   precies zoals je het in Bambu Studio klaarzet.
+   ===================================================================== */
+const VOORBEELD_DRIEHOEKEN = 9000;   // samen over alle onderdelen
+
+/* Dunt uit tot er hooguit `houd` driehoeken over zijn. */
+function dunUit(mesh, houd){
+  const n = mesh.length / 9;
+  if (n <= houd) return mesh;
+  const step = Math.ceil(n / houd);
+  const out = new Float32Array(Math.ceil(n / step) * 9);
+  let w = 0;
+  for (let i = 0; i < n; i += step){ out.set(mesh.subarray(i*9, i*9+9), w); w += 9; }
+  return out.subarray(0, w);
+}
+
+/* Alle onderdelen delen één omhullende doos, anders schuiven ze uit elkaar. */
+function voorbeeldUitDelen(delen){
+  const min = [Infinity,Infinity,Infinity], max = [-Infinity,-Infinity,-Infinity];
+  const ruw = delen.map(d => d.full || d.mesh).filter(m => m && m.length);
+  if (!ruw.length) throw new Error("geen vorm gevonden om te tonen");
+  for (const m of ruw){
+    for (let o = 0; o < m.length; o += 3){
+      for (let d = 0; d < 3; d++){
+        const v = m[o+d];
+        if (v < min[d]) min[d] = v;
+        if (v > max[d]) max[d] = v;
+      }
+    }
+  }
+  const span = Math.max(max[0]-min[0], max[1]-min[1], max[2]-min[2]) || 1;
+  const totaal = ruw.reduce((s,m) => s + m.length/9, 0);
+  const factor = Math.min(1, VOORBEELD_DRIEHOEKEN / totaal);
+  return {
+    min, span,
+    size: [max[0]-min[0], max[1]-min[1], max[2]-min[2]],
+    parts: ruw.map((m, i) => {
+      const dun = dunUit(m, Math.max(60, Math.floor(m.length/9 * factor)));
+      const u = new Uint16Array(dun.length);
+      for (let o = 0; o < dun.length; o += 3){
+        for (let d = 0; d < 3; d++){
+          u[o+d] = Math.max(0, Math.min(65535, Math.round((dun[o+d] - min[d]) / span * 65535)));
+        }
+      }
+      return { u, label: delen[i]?.label || null };
+    }),
+  };
+}
+
+/* Terug naar echte punten. */
+function voorbeeldNaarMeshes(v){
+  return v.parts.map(p => {
+    const u = p.u, m = new Float32Array(u.length);
+    for (let o = 0; o < u.length; o += 3){
+      for (let d = 0; d < 3; d++) m[o+d] = v.min[d] + u[o+d] / 65535 * v.span;
+    }
+    return m;
+  });
+}
+
+async function bewaarVoorbeeld(productId, v){
+  await setDoc(doc(db, "previews", productId), {
+    min: v.min, span: v.span, size: v.size,
+    parts: v.parts.map(p => ({
+      b: Bytes.fromUint8Array(new Uint8Array(p.u.buffer, p.u.byteOffset, p.u.byteLength)),
+      label: p.label || null,
+    })),
+    createdAt: Date.now(),
+  });
+}
+async function wisVoorbeeld(productId){
+  try{ await deleteDoc(doc(db, "previews", productId)); }catch(e){ /* stond er al niet */ }
+}
+/* Eén keer ophalen per product; daarna uit het geheugen. */
+const voorbeeldCache = new Map();
+async function haalVoorbeeld(productId){
+  if (voorbeeldCache.has(productId)) return voorbeeldCache.get(productId);
+  let uit = null;
+  try{
+    const snap = await getDoc(doc(db, "previews", productId));
+    if (snap.exists()){
+      const d = snap.data();
+      uit = {
+        min: d.min, span: d.span, size: d.size,
+        parts: (d.parts || []).map(p => {
+          const bytes = p.b.toUint8Array();
+          // een kopie: de onderliggende buffer hoeft niet uitgelijnd te zijn
+          const u = new Uint16Array(bytes.length / 2);
+          new Uint8Array(u.buffer).set(bytes);
+          return { u, label: p.label || null };
+        }),
+      };
+    }
+  }catch(e){ /* geen voorbeeld is geen probleem */ }
+  voorbeeldCache.set(productId, uit);
+  return uit;
+}
+
 /* --------------------------- inlezen per bestand --------------------------- */
 /* Geeft één of meer geometrieën terug: een 3MF met meerdere objecten of
    platen valt hier al uiteen in losse delen. */
@@ -1932,6 +2036,49 @@ function drawMesh(canvas, geo, opts){
   }
 }
 
+/* Tekent een model dat uit meerdere onderdelen bestaat, elk in zijn eigen
+   kleur. Alle driehoeken gaan door één diepteordening, anders zou een arm
+   voor een lichaam belanden dat er eigenlijk vóór staat. */
+function drawModel(canvas, meshes, kleuren, opts){
+  const o = opts || {};
+  const geo = { center: o.center, size: o.size, minZ: o.minZ };
+  const c = meshCanvas(canvas, geo, { ...o, plate: false });
+  if (!c) return;
+  const { g, project, cy, sy } = c;
+  const light = [0.42, -0.55, 0.72];
+
+  const tris = [];
+  meshes.forEach((m, deel) => {
+    const kl = kleuren[deel] || kleuren[kleuren.length - 1] || { hex: "#B8BCC2", finish: "basic" };
+    const { r, g: gg, b } = hexToRgb(kl.hex || "#B8BCC2");
+    const gloss = kl.finish === "silk" ? 0.34 : kl.finish === "basic" ? 0.14 : 0;
+    for (let i = 0; i < m.length; i += 9){
+      const A = project(m[i], m[i+1], m[i+2]);
+      const B = project(m[i+3], m[i+4], m[i+5]);
+      const C = project(m[i+6], m[i+7], m[i+8]);
+      if ((B[0]-A[0]) * (C[1]-A[1]) - (C[0]-A[0]) * (B[1]-A[1]) > 0) continue;   // achterkant
+      const ux=m[i+3]-m[i], uy=m[i+4]-m[i+1], uz=m[i+5]-m[i+2];
+      const vx=m[i+6]-m[i], vy=m[i+7]-m[i+1], vz=m[i+8]-m[i+2];
+      let nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      nx/=len; ny/=len; nz/=len;
+      const lx = light[0]*cy - light[1]*sy, ly = light[0]*sy + light[1]*cy;
+      let f = 0.30 + 0.70 * Math.abs(nx*lx + ny*ly + nz*light[2]);
+      if (gloss) f = Math.min(1.30, f + Math.pow(f, 6) * gloss * 2.2);
+      tris.push([ (A[2]+B[2]+C[2])/3, A, B, C,
+        `rgb(${Math.round(Math.min(255,r*f))},${Math.round(Math.min(255,gg*f))},${Math.round(Math.min(255,b*f))})` ]);
+    }
+  });
+  tris.sort((a,b) => a[0] - b[0]);
+  g.lineJoin = "round";
+  g.lineWidth = 0.7;
+  for (const [, A, B, C, col] of tris){
+    g.fillStyle = col; g.strokeStyle = col;
+    g.beginPath(); g.moveTo(A[0],A[1]); g.lineTo(B[0],B[1]); g.lineTo(C[0],C[1]); g.closePath();
+    g.fill(); g.stroke();
+  }
+}
+
 /* --------------------------- kleurhulpjes --------------------------- */
 function hexToRgb(hex){
   const h = String(hex || "").replace("#","").trim();
@@ -2049,9 +2196,112 @@ function volgLink(){
   }, 120);
 }
 
+/* =====================================================================
+   Kortingscodes
+   Een code staat als eigen document in de database, met de code zelf als
+   naam. Zo kan iemand alleen een code opvragen die hij al kent — de hele
+   lijst opvragen mag alleen jij. Wat je instelt: een percentage of een vast
+   bedrag, tot wanneer hij geldig is, hoe vaak hij gebruikt mag worden, en
+   vanaf welk bedrag hij telt.
+   ===================================================================== */
+function codeNet(s){ return (s || "").trim().toUpperCase().replace(/\s+/g, ""); }
+
+/* Kijkt een code na tegen wat er nu in de winkelwagen zit. */
+function keurCode(code, data, subtotaal){
+  if (!data) return { ok: false, waarom: "Deze code bestaat niet" };
+  if (data.active === false) return { ok: false, waarom: "Deze code staat uit" };
+  if (data.until && Date.now() > data.until) return { ok: false, waarom: "Deze code is verlopen" };
+  if (data.maxUses && (data.used || 0) >= data.maxUses) return { ok: false, waarom: "Deze code is al opgebruikt" };
+  if (data.minTotal && subtotaal < data.minTotal){
+    return { ok: false, waarom: `Deze code geldt vanaf ${fmtEUR(data.minTotal)}` };
+  }
+  const bedrag = data.pct
+    ? Math.round(subtotaal * data.pct) / 100
+    : Math.min(subtotaal, data.euro || 0);
+  if (bedrag <= 0) return { ok: false, waarom: "Deze code levert hier niets op" };
+  return {
+    ok: true, code, bedrag: Math.round(bedrag * 100) / 100,
+    uitleg: data.pct ? `${data.pct}% korting` : `${fmtEUR(data.euro)} korting`,
+  };
+}
+async function zoekCode(code, subtotaal){
+  const c = codeNet(code);
+  if (!c) return { ok: false, waarom: "Vul een code in" };
+  try{
+    const snap = await getDoc(doc(db, "codes", c));
+    return keurCode(c, snap.exists() ? snap.data() : null, subtotaal);
+  }catch(e){ return { ok: false, waarom: "Kon de code niet nakijken" }; }
+}
+/* Eén gebruik bijtellen. Lukt dat niet, dan is de bestelling belangrijker. */
+async function telCodeGebruik(code){
+  try{
+    const ref = doc(db, "codes", code);
+    const snap = await getDoc(ref);
+    if (snap.exists()) await updateDoc(ref, { used: (snap.data().used || 0) + 1 });
+  }catch(e){ /* niet erg genoeg om een bestelling voor tegen te houden */ }
+}
+
+/* =====================================================================
+   Afhalen in plaats van verzenden
+   Je zet zelf de dagen en uren waarop het kan; de klant kiest een moment uit
+   wat er dan overblijft. Verzendkosten vallen weg.
+   ===================================================================== */
+const AFHAAL_DOC = () => doc(db, "settings", "pickup");
+const AFHAAL_STANDAARD = {
+  enabled: false, address: "", note: "",
+  days: [], slotMinutes: 30, leadHours: 24, weeks: 2,
+};
+function afhalen(){ return { ...AFHAAL_STANDAARD, ...(state.pickup || {}) }; }
+function listenPickup(){
+  onSnapshot(AFHAAL_DOC(), (snap) => {
+    state.pickup = snap.exists() ? snap.data() : null;
+    if (["checkout","admin"].includes(state.view)) render();
+  }, () => { /* niets ingesteld: afhalen wordt gewoon niet aangeboden */ });
+}
+async function savePickup(v){ await setDoc(AFHAAL_DOC(), v); }
+
+/* De hele lijst codes mag alleen jij zien; de klant vraagt er één op bij naam. */
+function listenCodes(){
+  if (state.__codesListening || !state.profile?.isAdmin) return;
+  state.__codesListening = true;
+  onSnapshot(query(collection(db, "codes"), orderBy("createdAt", "desc")), (snap) => {
+    state.codes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (state.view === "admin") render();
+  }, () => { state.codes = []; });
+}
+
+/* Alle momenten die nog te kiezen zijn, van vroeg naar laat. */
+function afhaalMomenten(nu = Date.now()){
+  const a = afhalen();
+  if (!a.enabled || !Array.isArray(a.days) || !a.days.length) return [];
+  const vroegst = nu + (a.leadHours || 0) * 3600e3;
+  const uit = [];
+  const stap = Math.max(10, a.slotMinutes || 30);
+  for (let d = 0; d < (a.weeks || 2) * 7 && uit.length < 120; d++){
+    const dag = new Date(nu);
+    dag.setDate(dag.getDate() + d);
+    dag.setHours(0, 0, 0, 0);
+    // zondag telt in de instelling als 7, zoals mensen het zeggen
+    const nr = dag.getDay() === 0 ? 7 : dag.getDay();
+    for (const open of a.days.filter(x => +x.day === nr)){
+      const [vu, vm] = String(open.from || "17:00").split(":").map(Number);
+      const [tu, tm] = String(open.to || "20:00").split(":").map(Number);
+      for (let min = vu*60 + (vm||0); min + stap <= tu*60 + (tm||0); min += stap){
+        const t = new Date(dag); t.setMinutes(min);
+        if (t.getTime() >= vroegst) uit.push(t.getTime());
+      }
+    }
+  }
+  return uit.sort((x,y) => x - y);
+}
+const fmtMoment = (t) => new Date(t).toLocaleString('nl-BE',
+  { weekday:'long', day:'numeric', month:'long', hour:'2-digit', minute:'2-digit' });
+
 async function placeOrder(shippingCountry, address, payment){
   if (!state.user){ notify("Log in om te bestellen"); go("login"); return; }
-  const rate = SHIPPING_RATES.find(r=>r.country===shippingCountry) || SHIPPING_RATES[0];
+  const ophalen = state.__checkout?.pickupAt || null;
+  const rate = ophalen ? { price: 0 } : (SHIPPING_RATES.find(r=>r.country===shippingCountry) || SHIPPING_RATES[0]);
+  const korting = state.__korting || null;
   const order = {
     uid: state.user.uid,
     userEmail: state.user.email,
@@ -2065,10 +2315,15 @@ async function placeOrder(shippingCountry, address, payment){
       uploadId: uploadId || null,
       sliced: sliced === undefined ? null : !!sliced,
     })),
-    shippingCountry, shippingAddress: address,
+    shippingCountry: ophalen ? "Afhalen" : shippingCountry,
+    shippingAddress: address,
     shippingCost: rate.price,
+    pickupAt: ophalen,
+    pickupAddress: ophalen ? (afhalen().address || "") : null,
+    discountCode: korting?.code || null,
+    discountAmount: korting?.bedrag || 0,
     subtotal: cartTotal(),
-    total: cartTotal() + rate.price,
+    total: Math.max(0, cartTotal() - (korting?.bedrag || 0)) + rate.price,
     status: "In verwerking",
     paymentMethod: payment?.method || "Demo",
     paymentRef: payment?.ref || "",
@@ -2080,6 +2335,8 @@ async function placeOrder(shippingCountry, address, payment){
     state.cart = []; saveCart();
     state.__checkout = null;
     state.__ckVeld = null; state.__ckLand = null; state.__adresCheck = null;
+    state.__korting = null; state.__afhaal = null;
+    if (korting) telCodeGebruik(korting.code);
     notify("Betaald met testgeld — bestelling geplaatst!");
     go("account");
     const geplaatst = { id: ref.id, ...order };
@@ -2255,8 +2512,9 @@ async function mailGeleverd(o){
 
 /* --------------------------- products admin --------------------------- */
 async function addProduct(p){
-  await addDoc(collection(db,"products"), { ...p, createdAt: Date.now() });
+  const ref = await addDoc(collection(db,"products"), { ...p, createdAt: Date.now() });
   notify("Product toegevoegd");
+  return ref.id;
 }
 async function updateProduct(id, p){
   await updateDoc(doc(db,"products",id), p);
@@ -2265,6 +2523,8 @@ async function updateProduct(id, p){
 async function deleteProduct(id){
   if (!confirm("Dit product definitief verwijderen?")) return;
   await deleteDoc(doc(db,"products",id));
+  await wisVoorbeeld(id);            // het 3D-voorbeeld hoort er niet los te blijven
+  voorbeeldCache.delete(id);
   notify("Product verwijderd");
 }
 
@@ -2831,9 +3091,15 @@ function viewProduct(){
   const all = productImages(p);
   const chosen = currentFilament(p);
   const active = Math.min(state.__gallery || 0, Math.max(0, all.length - 1));
-  const main = all.length
-    ? `<img id="galleryMain" src="${esc(all[active])}" alt="${esc(p.name)}" />`
-    : `<span><i class="fa-solid fa-cube" aria-hidden="true"></i></span>`;
+  // Staat er een 3D-voorbeeld bij, dan is dat het eerste wat je ziet: het toont
+  // het echte model in de kleur die je zelf kiest.
+  const model3d = state.__voorbeeld?.id === p.id ? state.__voorbeeld.data : null;
+  const toon3d = !!model3d && state.__toon3d !== false;
+  const main = toon3d
+    ? `<canvas id="productMesh" class="mesh3d" style="width:100%;height:100%;display:block;touch-action:none;cursor:grab;"></canvas>`
+    : all.length
+      ? `<img id="galleryMain" src="${esc(all[active])}" alt="${esc(p.name)}" />`
+      : `<span><i class="fa-solid fa-cube" aria-hidden="true"></i></span>`;
   const strip = all.length > 1 ? `
     <div class="strip">
       ${all.map((src,i)=>`<button class="${i===active?'active':''}" data-img="${i}"><img src="${esc(src)}" alt="Afbeelding ${i+1}" /></button>`).join("")}
@@ -2864,8 +3130,14 @@ function viewProduct(){
           <div class="viewer rel">
             ${main}
             ${chosen ? `<span class="viewer-tag">${esc(chosen.name.toUpperCase())}</span>` : ``}
+            ${toon3d ? `<span class="viewer-hint">${ic("arrows-up-down-left-right")} Sleep om te draaien</span>` : ``}
           </div>
-          ${strip}
+          ${model3d && all.length ? `
+            <div class="fil-types" style="margin:10px 0 0;">
+              <button class="fil-type ${toon3d ? "active" : ""}" data-toon="3d">${ic("cube")} 3D</button>
+              <button class="fil-type ${toon3d ? "" : "active"}" data-toon="foto">${ic("image")} Foto's</button>
+            </div>` : ``}
+          ${toon3d ? `` : strip}
         </div>
         <div>
           ${p.category ? `<span class="badge badge-accent">${esc(p.category)}</span>` : ``}
@@ -2906,6 +3178,50 @@ function viewProduct(){
       </div>
     </div>`;
 }
+/* Haalt het 3D-voorbeeld op als het er nog niet is, en tekent het in de kleuren
+   die op dit moment gekozen staan. Onderdeel 1 krijgt de kleur van vak 1,
+   onderdeel 2 die van vak 2; bij een model in één kleur krijgt alles dezelfde. */
+async function toon3dVoorbeeld(){
+  const p = state.selectedProduct;
+  if (!p) return;
+  if (state.__voorbeeld?.id !== p.id){
+    const data = await haalVoorbeeld(p.id);
+    // ondertussen kan iemand al doorgeklikt zijn
+    if (state.selectedProduct?.id !== p.id) return;
+    state.__voorbeeld = { id: p.id, data };
+    if (data) { render(); return; }          // opnieuw tekenen, nu mét het model
+  }
+  const v = state.__voorbeeld.data;
+  const cv = document.getElementById('productMesh');
+  if (!v || !cv) return;
+
+  if (!state.__meshView) state.__meshView = { yaw: 0.7, pitch: 0.42 };
+  const meshes = v.__meshes || (v.__meshes = voorbeeldNaarMeshes(v));
+  const vakken = colorSlots(p);
+  const kleuren = vakken.length
+    ? vakken.map((_, i) => slotFilament(p, i) || currentFilament(p) || {})
+    : [currentFilament(p) || { hex: "#B8BCC2", finish: "basic" }];
+
+  const teken = () => drawModel(cv, meshes, kleuren, {
+    center: [v.min[0] + v.size[0]/2, v.min[1] + v.size[1]/2, 0],
+    size: v.size, minZ: v.min[2],
+    yaw: state.__meshView.yaw, pitch: state.__meshView.pitch,
+  });
+  teken();
+  requestAnimationFrame(teken);              // na het uitmeten van het vak
+
+  let slepen = false, lx = 0, ly = 0;
+  cv.onpointerdown = (e) => { slepen = true; lx = e.clientX; ly = e.clientY; cv.setPointerCapture(e.pointerId); };
+  cv.onpointermove = (e) => {
+    if (!slepen) return;
+    state.__meshView.yaw += (e.clientX - lx) * 0.011;
+    state.__meshView.pitch = Math.max(-1.3, Math.min(1.4, state.__meshView.pitch + (e.clientY - ly) * 0.009));
+    lx = e.clientX; ly = e.clientY;
+    teken();
+  };
+  cv.onpointerup = cv.onpointercancel = () => { slepen = false; };
+}
+
 function attachProductHandlers(){
   let qty = 1;
   const qv = document.getElementById('qVal');
@@ -2921,6 +3237,10 @@ function attachProductHandlers(){
   document.querySelectorAll('[data-img]').forEach(btn=>{
     btn.onclick = () => { state.__gallery = parseInt(btn.dataset.img,10) || 0; render(); };
   });
+  document.querySelectorAll('[data-toon]').forEach(btn=>{
+    btn.onclick = () => { state.__toon3d = btn.dataset.toon === "3d"; render(); };
+  });
+  toon3dVoorbeeld();
   document.querySelectorAll('[data-filtype]').forEach(btn=>{
     btn.onclick = () => {
       state.__filType = btn.dataset.filtype;
@@ -3980,11 +4300,46 @@ async function zoekAdres({ street, zip, city }, land){
   }catch(e){ return { status: "onbereikbaar" }; }
 }
 
+/* De momenten waarop je kunt afhalen, gegroepeerd per dag. */
+function afhaalBlok(){
+  const momenten = afhaalMomenten();
+  const a = afhalen();
+  if (!momenten.length) return `
+    <div class="cart-item" style="margin-bottom:14px;">
+      <p class="muted" style="font-size:13px;margin:0;">
+        Er staan op dit moment geen afhaalmomenten open. Kies verzenden, of laat het ons weten.
+      </p>
+    </div>`;
+  const perDag = new Map();
+  for (const t of momenten){
+    const d = new Date(t).toLocaleDateString('nl-BE', { weekday:'long', day:'numeric', month:'long' });
+    if (!perDag.has(d)) perDag.set(d, []);
+    perDag.get(d).push(t);
+  }
+  const gekozen = state.__afhaal;
+  return `
+    <div class="cart-item" style="margin-bottom:14px;">
+      ${a.address ? `<p style="font-size:13px;margin:0 0 4px;">${ic("location-dot")} ${esc(a.address)}</p>` : ``}
+      ${a.note ? `<p class="muted" style="font-size:12px;margin:0 0 10px;">${esc(a.note)}</p>` : ``}
+      <label class="field-label" style="margin-top:6px;">Wanneer kom je het halen?</label>
+      ${[...perDag].map(([dag, lijst]) => `
+        <p class="muted font-mono" style="font-size:11px;margin:10px 0 5px;text-transform:uppercase;letter-spacing:.06em;">${esc(dag)}</p>
+        <div class="fil-types" style="margin:0;">
+          ${lijst.map(t => `<button class="fil-type ${gekozen === t ? "active" : ""}" data-slot-at="${t}">${
+            esc(new Date(t).toLocaleTimeString('nl-BE', { hour:'2-digit', minute:'2-digit' }))}</button>`).join("")}
+        </div>`).join("")}
+    </div>`;
+}
+
 function viewCheckout(){
   // wat er getypt is overleeft een hertekening; anders ben je het kwijt zodra
   // de adrescontrole iets te melden heeft
   const addr = state.__ckVeld || state.profile?.address || {};
+  const kanAfhalen = afhalen().enabled && afhaalMomenten().length > 0;
+  const ophalen = kanAfhalen && state.__leverwijze === "afhaal";
   const land = state.__ckLand || SHIPPING_RATES[0].country;
+  const verzend = ophalen ? 0 : (SHIPPING_RATES.find(r => r.country === land) || SHIPPING_RATES[0]).price;
+  const kort = state.__korting;
   const rate = SHIPPING_RATES.find(r => r.country === land) || SHIPPING_RATES[0];
   const options = SHIPPING_RATES.map(r=>`<option value="${r.country}"${r.country===land?" selected":""}>${r.country} — ${fmtEUR(r.price)}</option>`).join("");
   const c = state.__adresCheck;
@@ -3992,13 +4347,24 @@ function viewCheckout(){
     <div style="padding:32px 0;max-width:480px;">
       <button class="back" onclick="go('cart')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Terug naar winkelwagen</button>
       <h1 class="font-display" style="font-size:22px;margin-bottom:16px;">Afrekenen</h1>
-      <input id="ckStreet" placeholder="Straat + nr" value="${esc(addr.street||'')}" />
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-        <input id="ckZip" placeholder="Postcode" value="${esc(addr.zip||'')}" />
-        <input id="ckCity" placeholder="Gemeente" value="${esc(addr.city||'')}" />
+
+      ${kanAfhalen ? `
+        <div class="fil-types" style="margin:0 0 14px;">
+          <button class="fil-type ${ophalen ? "" : "active"}" data-lever="post">${ic("truck")} Verzenden</button>
+          <button class="fil-type ${ophalen ? "active" : ""}" data-lever="afhaal">${ic("shop")} Afhalen</button>
+        </div>` : ``}
+
+      <div${ophalen ? ' hidden' : ''}>
+        <input id="ckStreet" placeholder="Straat + nr" value="${esc(addr.street||'')}" />
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <input id="ckZip" placeholder="Postcode" value="${esc(addr.zip||'')}" />
+          <input id="ckCity" placeholder="Gemeente" value="${esc(addr.city||'')}" />
+        </div>
+        <label class="field-label">Land</label>
+        <select class="field" id="ckCountry">${options}</select>
       </div>
-      <label class="field-label">Land</label>
-      <select class="field" id="ckCountry">${options}</select>
+
+      ${ophalen ? afhaalBlok() : ``}
 
       ${c?.status === "onbekend" ? `
         <div class="cart-item" id="adresOnbekend" style="border-color:var(--accent);margin:14px 0;">
@@ -4026,10 +4392,29 @@ function viewCheckout(){
           </div>
         </div>` : ``}
 
-      <div class="cart-item font-mono" style="font-size:13px;margin:16px 0;">
+      <div class="cart-item" style="margin:16px 0 14px;">
+        <label class="field-label" style="margin-top:0;">Kortingscode</label>
+        ${kort ? `
+          <div class="between" style="gap:10px;">
+            <span style="font-size:14px;">
+              <span class="sale-flag">${esc(kort.code)}</span>
+              <span class="muted" style="margin-left:8px;">${esc(kort.uitleg)}</span>
+            </span>
+            <button class="btn btn-ghost btn-sm" id="wisCodeBtn">Weghalen</button>
+          </div>` : `
+          <div class="row" style="gap:8px;">
+            <input id="ckCode" placeholder="Bijv. LENTE10" value="${esc(state.__codeTyped || "")}"
+                   style="margin:0;text-transform:uppercase;" />
+            <button class="btn btn-ghost btn-sm" id="codeBtn" style="flex-shrink:0;">Toepassen</button>
+          </div>
+          ${state.__codeFout ? `<p style="font-size:12px;color:var(--accent);margin:8px 0 0;">${esc(state.__codeFout)}</p>` : ``}`}
+      </div>
+
+      <div class="cart-item font-mono" style="font-size:13px;margin:0 0 16px;">
         <div class="between"><span class="muted">Subtotaal</span><span>${fmtEUR(cartTotal())}</span></div>
-        <div class="between"><span class="muted">Verzending</span><span id="ckShipVal">${fmtEUR(rate.price)}</span></div>
-        <div class="between" style="border-top:1px solid var(--surface2);margin-top:6px;padding-top:6px;color:var(--accent);"><span>Totaal</span><span id="ckTotalVal">${fmtEUR(cartTotal()+rate.price)}</span></div>
+        ${kort ? `<div class="between" style="color:var(--accent);"><span>Korting ${esc(kort.code)}</span><span>&minus;${fmtEUR(kort.bedrag)}</span></div>` : ``}
+        <div class="between"><span class="muted">${ophalen ? "Afhalen" : "Verzending"}</span><span id="ckShipVal">${ophalen ? "gratis" : fmtEUR(verzend)}</span></div>
+        <div class="between" style="border-top:1px solid var(--surface2);margin-top:6px;padding-top:6px;color:var(--accent);"><span>Totaal</span><span id="ckTotalVal">${fmtEUR(Math.max(0, cartTotal() - (kort?.bedrag || 0)) + verzend)}</span></div>
       </div>
       <button class="btn btn-accent" style="width:100%;" id="placeOrderBtn"${c?.bezig ? " disabled" : ""}>
         ${c?.bezig ? "Adres nakijken…" : `Naar betaling <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>`}
@@ -4038,40 +4423,92 @@ function viewCheckout(){
     </div>`;
 }
 function attachCheckoutHandlers(){
+  const ophalen = state.__leverwijze === "afhaal" && afhalen().enabled;
   const sel = document.getElementById('ckCountry');
+  const veld = id => document.getElementById(id);
   const lees = () => ({
-    street: document.getElementById('ckStreet').value.trim(),
-    zip: document.getElementById('ckZip').value.trim(),
-    city: document.getElementById('ckCity').value.trim(),
+    street: veld('ckStreet')?.value.trim() || "",
+    zip: veld('ckZip')?.value.trim() || "",
+    city: veld('ckCity')?.value.trim() || "",
   });
-  const updateTotals = () => {
-    const rate = SHIPPING_RATES.find(r=>r.country===sel.value) || SHIPPING_RATES[0];
-    document.getElementById('ckShipVal').textContent = fmtEUR(rate.price);
-    document.getElementById('ckTotalVal').textContent = fmtEUR(cartTotal()+rate.price);
-  };
-  sel.onchange = () => { state.__ckLand = sel.value; state.__adresCheck = null; updateTotals(); };
-  // typ je iets bij, dan geldt een eerder oordeel niet meer
-  for (const id of ['ckStreet','ckZip','ckCity']){
-    document.getElementById(id).oninput = () => {
-      state.__ckVeld = lees();
-      if (state.__adresCheck) { state.__adresCheck = null; render(); }
+
+  // verzenden of afhalen
+  document.querySelectorAll('[data-lever]').forEach(b => {
+    b.onclick = () => {
+      state.__leverwijze = b.dataset.lever;
+      state.__adresCheck = null;
+      render();
     };
+  });
+  document.querySelectorAll('[data-slot-at]').forEach(b => {
+    b.onclick = () => { state.__afhaal = +b.dataset.slotAt; render(); };
+  });
+
+  // kortingscode
+  const codeBtn = veld('codeBtn');
+  if (codeBtn) codeBtn.onclick = async () => {
+    const inp = veld('ckCode');
+    state.__codeTyped = codeNet(inp.value);
+    codeBtn.disabled = true;
+    const uit = await zoekCode(state.__codeTyped, cartTotal());
+    if (uit.ok){
+      state.__korting = uit;
+      state.__codeFout = null;
+      state.__codeTyped = "";
+      notify(`Code ${uit.code} toegepast — ${uit.uitleg}`);
+    } else {
+      state.__korting = null;
+      state.__codeFout = uit.waarom;
+    }
+    render();
+  };
+  const wisCode = veld('wisCodeBtn');
+  if (wisCode) wisCode.onclick = () => { state.__korting = null; state.__codeFout = null; render(); };
+
+  if (sel){
+    const updateTotals = () => {
+      const rate = SHIPPING_RATES.find(r=>r.country===sel.value) || SHIPPING_RATES[0];
+      veld('ckShipVal').textContent = fmtEUR(rate.price);
+      veld('ckTotalVal').textContent = fmtEUR(Math.max(0, cartTotal() - (state.__korting?.bedrag || 0)) + rate.price);
+    };
+    sel.onchange = () => { state.__ckLand = sel.value; state.__adresCheck = null; updateTotals(); };
+    // typ je iets bij, dan geldt een eerder oordeel niet meer
+    for (const id of ['ckStreet','ckZip','ckCity']){
+      const el = veld(id);
+      if (el) el.oninput = () => {
+        state.__ckVeld = lees();
+        if (state.__adresCheck) { state.__adresCheck = null; render(); }
+      };
+    }
   }
 
-  const doorGaan = () => {
-    state.__checkout = { country: sel.value, address: state.__ckVeld };
+  const doorGaan = (extra) => {
+    state.__checkout = { country: sel?.value || "België", address: state.__ckVeld, ...extra };
     state.__adresCheck = null;
     go("payment");
   };
-  const door = document.getElementById('tochDoorBtn');
-  if (door) door.onclick = doorGaan;
-  const over = document.getElementById('neemOverBtn');
+  const door = veld('tochDoorBtn');
+  if (door) door.onclick = () => doorGaan();
+  const over = veld('neemOverBtn');
   if (over) over.onclick = () => {
     state.__ckVeld = { ...state.__ckVeld, ...state.__adresCheck.voorstel };
     doorGaan();
   };
 
-  document.getElementById('placeOrderBtn').onclick = async () => {
+  veld('placeOrderBtn').onclick = async () => {
+    // afhalen: geen adres nodig, wel een moment
+    if (ophalen){
+      if (!state.__afhaal){ notify("Kies een moment om af te halen"); return; }
+      if (!afhaalMomenten().includes(state.__afhaal)){
+        state.__afhaal = null;
+        notify("Dat moment kan niet meer — kies een ander");
+        render();
+        return;
+      }
+      doorGaan({ pickupAt: state.__afhaal });
+      return;
+    }
+
     const adres = lees();
     state.__ckVeld = adres;
     state.__ckLand = sel.value;
@@ -4108,8 +4545,9 @@ function viewPayment(){
   if (!ck || state.cart.length === 0){
     return `<div style="padding:32px 0;"><p class="muted">Geen bestelling in behandeling.</p><button class="btn btn-ghost btn-sm" onclick="go('cart')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Naar winkelwagen</button></div>`;
   }
-  const rate = SHIPPING_RATES.find(r=>r.country===ck.country) || SHIPPING_RATES[0];
-  const total = cartTotal() + rate.price;
+  const verzend = ck.pickupAt ? 0 : (SHIPPING_RATES.find(r=>r.country===ck.country) || SHIPPING_RATES[0]).price;
+  const kort = state.__korting;
+  const total = Math.max(0, cartTotal() - (kort?.bedrag || 0)) + verzend;
   return `
     <div style="padding:32px 0;max-width:480px;">
       <button class="back" onclick="go('checkout')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Terug naar gegevens</button>
@@ -4131,6 +4569,13 @@ function viewPayment(){
         </div>
       </div>
 
+      ${ck.pickupAt ? `
+        <div class="cart-item" style="margin-bottom:14px;">
+          <p style="font-size:13px;margin:0 0 2px;">${ic("shop")} Je haalt het zelf op</p>
+          <p style="font-size:14px;font-weight:600;margin:0 0 2px;">${esc(fmtMoment(ck.pickupAt))}</p>
+          ${afhalen().address ? `<p class="muted" style="font-size:12px;margin:0;">${esc(afhalen().address)}</p>` : ``}
+        </div>` : ``}
+
       <label class="field-label">Betaalmethode</label>
       <select class="field" id="payMethod">
         <option>Bancontact (test)</option>
@@ -4141,7 +4586,8 @@ function viewPayment(){
 
       <div class="cart-item font-mono" style="font-size:13px;margin:16px 0;">
         <div class="between"><span class="muted">Subtotaal</span><span>${fmtEUR(cartTotal())}</span></div>
-        <div class="between"><span class="muted">Verzending naar ${esc(ck.country)}</span><span>${fmtEUR(rate.price)}</span></div>
+        ${kort ? `<div class="between" style="color:var(--accent);"><span>Korting ${esc(kort.code)}</span><span>&minus;${fmtEUR(kort.bedrag)}</span></div>` : ``}
+        <div class="between"><span class="muted">${ck.pickupAt ? "Afhalen" : "Verzending naar " + esc(ck.country)}</span><span>${ck.pickupAt ? "gratis" : fmtEUR(verzend)}</span></div>
         <div class="between" style="border-top:1px solid var(--surface2);margin-top:6px;padding-top:6px;color:var(--accent);"><span>Te betalen</span><span>${fmtEUR(total)}</span></div>
       </div>
 
@@ -4301,7 +4747,13 @@ function orderCard(o){
         <span class="badge${o.receivedAt ? " badge-accent" : ""}">${o.receivedAt ? "Ontvangen" : esc(o.status)}</span>
       </div>
       <div class="muted font-mono" style="font-size:11px;">Besteld op ${esc(new Date(o.createdAt).toLocaleDateString('nl-BE', { day:'numeric', month:'long', year:'numeric' }))}</div>
-      ${orderTracker(o)}
+      ${o.pickupAt ? `
+        <div class="cart-item" style="margin:10px 0;padding:11px 12px;">
+          <p style="font-size:13px;margin:0 0 2px;">${ic("shop")} Je haalt het zelf op</p>
+          <p style="font-size:14px;font-weight:600;margin:0 0 2px;">${esc(fmtMoment(o.pickupAt))}</p>
+          ${o.pickupAddress ? `<p class="muted" style="font-size:12px;margin:0;">${esc(o.pickupAddress)}</p>` : ``}
+        </div>` : ``}
+      ${o.pickupAt ? `` : orderTracker(o)}
       ${etaLine(o)}
       ${lines}
       <div class="kv" style="border-top:1px solid var(--surface2);margin-top:8px;padding-top:8px;">
@@ -4317,10 +4769,13 @@ function orderCard(o){
       ${open ? `
         <div style="margin-top:10px;">
           <div class="kv"><span>Subtotaal</span><span class="font-mono">${fmtEUR(o.subtotal ?? 0)}</span></div>
-          <div class="kv"><span>Verzending</span><span class="font-mono">${fmtEUR(o.shippingCost ?? 0)}</span></div>
+          ${o.discountCode ? `<div class="kv" style="color:var(--accent);"><span>Korting ${esc(o.discountCode)}</span><span class="font-mono">&minus;${fmtEUR(o.discountAmount || 0)}</span></div>` : ``}
+          <div class="kv"><span>${o.pickupAt ? "Afhalen" : "Verzending"}</span><span class="font-mono">${o.pickupAt ? "gratis" : fmtEUR(o.shippingCost ?? 0)}</span></div>
           <div class="kv"><span>Betaalwijze</span><span class="font-mono">${esc(o.paymentMethod || "—")}${o.demoPayment ? " (testgeld)" : ""}</span></div>
           ${o.paymentRef ? `<div class="kv"><span>Referentie</span><span class="font-mono">${esc(o.paymentRef)}</span></div>` : ``}
-          <div class="kv" style="margin-top:6px;"><span>Bezorgadres</span><span style="text-align:right;">${esc(a.street||'')}<br/>${esc(a.zip||'')} ${esc(a.city||'')}<br/>${esc(o.shippingCountry||'')}</span></div>
+          ${o.pickupAt
+            ? `<div class="kv" style="margin-top:6px;"><span>Afhalen bij</span><span style="text-align:right;">${esc(o.pickupAddress || "—")}</span></div>`
+            : `<div class="kv" style="margin-top:6px;"><span>Bezorgadres</span><span style="text-align:right;">${esc(a.street||'')}<br/>${esc(a.zip||'')} ${esc(a.city||'')}<br/>${esc(o.shippingCountry||'')}</span></div>`}
         </div>` : ``}
     </div>`;
 }
@@ -4542,6 +4997,12 @@ function viewAdmin(){
                     title="Opbergen: uit dit overzicht, blijft in het archief">${ic("box-archive")}</button>` : ``}
         </div>
       </div>
+      ${o.pickupAt ? `<p style="font-size:12px;margin:-2px 0 8px;font-weight:600;">
+        ${ic("shop")} Wordt afgehaald — ${esc(fmtMoment(o.pickupAt))}
+      </p>` : ``}
+      ${o.discountCode ? `<p class="muted font-mono" style="font-size:11px;margin:-2px 0 8px;">
+        CODE ${esc(o.discountCode)} · &minus;${fmtEUR(o.discountAmount || 0)}
+      </p>` : ``}
       ${o.receivedAt ? `<p style="font-size:11px;margin:-2px 0 8px;color:var(--accent);font-weight:600;">
         ${ic("circle-check")} Klant bevestigde de ontvangst op ${esc(new Date(o.receivedAt).toLocaleString('nl-BE'))}
       </p>` : ``}
@@ -4618,6 +5079,28 @@ function viewAdmin(){
             <div class="row" style="margin-bottom:12px;">
               <input id="pImgUrl" placeholder="…of plak een afbeeldings-URL (https://)" style="margin:0;" />
               <button class="btn btn-ghost btn-sm" id="addImgUrlBtn" style="flex-shrink:0;">Toevoegen</button>
+            </div>
+
+            <label class="field-label">3D-voorbeeld</label>
+            <div class="cart-item" style="padding:12px;margin-bottom:12px;">
+              <p class="muted" style="font-size:11px;line-height:1.55;margin:0 0 10px;">
+                Zet hier het model zelf bij, dan kan de klant het draaien en ziet hij het
+                in de kleur die hij kiest. Bestaat je 3mf uit meerdere objecten, dan krijgt
+                object 1 de kleur van vak 1, object 2 die van vak 2.
+              </p>
+              <input type="file" id="pModelFile" accept=".stl,.3mf" style="display:none;" />
+              <div class="row" style="gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-ghost btn-sm" id="pickModelBtn">${ic("cube")} Model kiezen</button>
+                ${state.__draftModel === null && ed?.has3d ? `` : ``}
+                <span class="muted font-mono" style="font-size:11px;" id="modelStand">${
+                  state.__draftModel
+                    ? `${state.__draftModel.parts.length} ${state.__draftModel.parts.length > 1 ? "onderdelen" : "onderdeel"} klaar`
+                    : state.__draftModel === null && ed?.has3d ? "verwijderd bij opslaan"
+                    : ed?.has3d ? "staat er al" : "nog geen model"
+                }</span>
+                ${(state.__draftModel || ed?.has3d) ? `
+                  <button class="btn btn-ghost btn-sm" id="wisModelBtn" style="margin-left:auto;">${ic("trash")}</button>` : ``}
+              </div>
             </div>
 
             <label class="field-label">Naam</label>
@@ -5044,13 +5527,183 @@ function viewPricingAdmin(){
     </div>
 
     ${mailAdminBlock()}
+    ${afhaalAdminBlock()}
+    ${codeAdminBlock()}
 
     <button class="btn btn-accent" id="savePricingBtn" style="width:100%;">Prijzen opslaan</button>
     <button class="btn btn-ghost btn-sm" id="resetPricingBtn" style="width:100%;margin-top:8px;justify-content:center;">Terug naar de standaardwaarden</button>`;
 }
 
+/* Afhalen instellen: op welke dagen en uren het kan. */
+const DAGNAMEN = ["maandag","dinsdag","woensdag","donderdag","vrijdag","zaterdag","zondag"];
+function afhaalAdminBlock(){
+  const a = state.__draftPickup || afhalen();
+  return `
+    <div class="cart-item" style="margin:0 0 14px;">
+      <div class="between" style="margin-bottom:8px;">
+        <h3 class="font-display" style="font-size:14px;margin:0;">Afhalen</h3>
+        <span class="badge${a.enabled ? " badge-accent" : ""}">${a.enabled ? "Staat aan" : "Staat uit"}</span>
+      </div>
+      <p class="muted" style="font-size:11px;line-height:1.55;margin:0 0 10px;">
+        Zet je dit aan, dan kan de klant kiezen om zelf te komen halen in plaats van te
+        laten verzenden. Verzendkosten vallen dan weg. Hij kiest een moment uit de uren
+        die je hier opgeeft.
+      </p>
+      <label class="row" style="gap:8px;margin-bottom:10px;">
+        <input type="checkbox" id="puOn" ${a.enabled ? "checked" : ""} style="width:auto;margin:0;" />
+        <span style="font-size:13px;">Afhalen aanbieden</span>
+      </label>
+      <label class="field-label">Waar</label>
+      <input id="puAddress" placeholder="Lepelstraat 8, 9280 Lebbeke" value="${esc(a.address || "")}" />
+      <label class="field-label">Erbij te zeggen</label>
+      <input id="puNote" placeholder="Bel even aan bij de zijdeur" value="${esc(a.note || "")}" />
+      <div class="form-grid">
+        <div>
+          <label class="field-label">Per hoeveel minuten</label>
+          <input id="puSlot" type="number" min="10" step="5" value="${a.slotMinutes || 30}" />
+        </div>
+        <div>
+          <label class="field-label">Ten vroegste over (uur)</label>
+          <input id="puLead" type="number" min="0" step="1" value="${a.leadHours ?? 24}" />
+        </div>
+        <div>
+          <label class="field-label">Hoeveel weken vooruit</label>
+          <input id="puWeeks" type="number" min="1" max="8" value="${a.weeks || 2}" />
+        </div>
+      </div>
+      <label class="field-label">Wanneer</label>
+      ${(a.days || []).map((d, i) => `
+        <div class="row" style="gap:6px;margin-bottom:6px;">
+          <select class="field puday" data-i="${i}" style="margin:0;flex:1;min-width:0;">
+            ${DAGNAMEN.map((n, k) => `<option value="${k+1}"${+d.day === k+1 ? " selected" : ""}>${n}</option>`).join("")}
+          </select>
+          <input class="pufrom" data-i="${i}" type="time" value="${esc(d.from || "17:00")}" style="margin:0;flex:0 0 105px;" />
+          <input class="puto" data-i="${i}" type="time" value="${esc(d.to || "20:00")}" style="margin:0;flex:0 0 105px;" />
+          <button class="btn btn-ghost btn-sm pudel" data-i="${i}" style="flex-shrink:0;">${ic("trash")}</button>
+        </div>`).join("")}
+      <button class="btn btn-ghost btn-sm" id="puAdd">${ic("plus")} Dag toevoegen</button>
+      ${a.enabled && (a.days || []).length ? `
+        <p class="muted font-mono" style="font-size:11px;margin:10px 0 0;">
+          ${afhaalMomenten().length} momenten open in de komende ${a.weeks || 2} weken
+        </p>` : ``}
+    </div>`;
+}
+
+/* Kortingscodes beheren. Ze staan elk als eigen document, met de code als naam. */
+function codeAdminBlock(){
+  const lijst = state.codes || [];
+  return `
+    <div class="cart-item" style="margin:0 0 14px;">
+      <h3 class="font-display" style="font-size:14px;margin:0 0 4px;">Kortingscodes</h3>
+      <p class="muted" style="font-size:11px;line-height:1.55;margin:0 0 10px;">
+        De klant typt de code bij het afrekenen. Zet een percentage óf een vast bedrag —
+        vul je allebei in, dan telt het percentage.
+      </p>
+      ${lijst.length ? lijst.map(c => `
+        <div class="admin-row between" style="margin-bottom:8px;padding:10px 12px;">
+          <div style="min-width:0;">
+            <div class="font-mono" style="font-size:13px;font-weight:600;">${esc(c.id)}</div>
+            <div class="muted font-mono" style="font-size:11px;">
+              ${c.pct ? c.pct + "%" : fmtEUR(c.euro || 0)}${c.minTotal ? ` · vanaf ${fmtEUR(c.minTotal)}` : ""}${
+                c.until ? ` · tot ${esc(new Date(c.until).toLocaleDateString('nl-BE'))}` : ""} ·
+              ${c.used || 0}${c.maxUses ? "/" + c.maxUses : ""}× gebruikt${c.active === false ? " · staat uit" : ""}
+            </div>
+          </div>
+          <button class="btn btn-ghost btn-sm codedel" data-code="${esc(c.id)}" style="flex-shrink:0;">${ic("trash")}</button>
+        </div>`).join("") : `<p class="muted" style="font-size:12px;margin:0 0 10px;">Nog geen codes.</p>`}
+
+      <div class="form-grid" style="margin-top:10px;">
+        <div>
+          <label class="field-label">Code</label>
+          <input id="cdName" placeholder="LENTE10" style="text-transform:uppercase;" />
+        </div>
+        <div>
+          <label class="field-label">Percentage</label>
+          <input id="cdPct" type="number" min="0" max="90" placeholder="10" />
+        </div>
+        <div>
+          <label class="field-label">…of vast bedrag (€)</label>
+          <input id="cdEuro" type="number" min="0" step="0.5" placeholder="5" />
+        </div>
+        <div>
+          <label class="field-label">Geldig vanaf (€)</label>
+          <input id="cdMin" type="number" min="0" step="0.5" placeholder="25" />
+        </div>
+        <div>
+          <label class="field-label">Hooguit x keer</label>
+          <input id="cdMax" type="number" min="0" step="1" placeholder="50" />
+        </div>
+        <div>
+          <label class="field-label">Tot en met</label>
+          <input id="cdUntil" type="date" />
+        </div>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="cdAdd" style="width:100%;justify-content:center;">${ic("plus")} Code toevoegen</button>
+    </div>`;
+}
+
 function attachPricingHandlers(){
   listenMail();
+  listenCodes();
+
+  // --- afhalen ---
+  const pu = () => (state.__draftPickup ||= { ...afhalen() });
+  const puVeld = (id, key, getal) => {
+    const el = document.getElementById(id);
+    if (el) el.oninput = () => { pu()[key] = getal ? (parseFloat(el.value) || 0) : el.value; };
+  };
+  const puOn = document.getElementById('puOn');
+  if (puOn) puOn.onchange = () => { pu().enabled = puOn.checked; render(); };
+  puVeld('puAddress', 'address'); puVeld('puNote', 'note');
+  puVeld('puSlot', 'slotMinutes', true); puVeld('puLead', 'leadHours', true); puVeld('puWeeks', 'weeks', true);
+  const puAdd = document.getElementById('puAdd');
+  if (puAdd) puAdd.onclick = () => {
+    const p = pu();
+    p.days = [...(p.days || []), { day: 6, from: "10:00", to: "12:00" }];
+    render();
+  };
+  document.querySelectorAll('.puday').forEach(el => {
+    el.onchange = () => { pu().days[+el.dataset.i].day = +el.value; render(); };
+  });
+  document.querySelectorAll('.pufrom').forEach(el => { el.oninput = () => { pu().days[+el.dataset.i].from = el.value; }; });
+  document.querySelectorAll('.puto').forEach(el => { el.oninput = () => { pu().days[+el.dataset.i].to = el.value; }; });
+  document.querySelectorAll('.pudel').forEach(el => {
+    el.onclick = () => { pu().days.splice(+el.dataset.i, 1); render(); };
+  });
+
+  // --- kortingscodes ---
+  const cdAdd = document.getElementById('cdAdd');
+  if (cdAdd) cdAdd.onclick = async () => {
+    const v = id => (document.getElementById(id)?.value || "").trim();
+    const code = codeNet(v('cdName'));
+    if (!/^[A-Z0-9-]{3,24}$/.test(code)){
+      notify("Een code bestaat uit 3 tot 24 letters, cijfers of streepjes"); return;
+    }
+    const pct = parseInt(v('cdPct'), 10) || 0;
+    const euro = parseFloat(v('cdEuro')) || 0;
+    if (!pct && !euro){ notify("Vul een percentage of een bedrag in"); return; }
+    try{
+      await setDoc(doc(db, "codes", code), {
+        pct: pct || 0, euro: pct ? 0 : euro,
+        minTotal: parseFloat(v('cdMin')) || 0,
+        maxUses: parseInt(v('cdMax'), 10) || 0,
+        until: v('cdUntil') ? new Date(v('cdUntil') + "T23:59:59").getTime() : null,
+        active: true, used: 0, createdAt: Date.now(),
+      });
+      for (const id of ['cdName','cdPct','cdEuro','cdMin','cdMax','cdUntil']){
+        const el = document.getElementById(id); if (el) el.value = "";
+      }
+      notify(`Code ${code} aangemaakt`);
+    }catch(e){ notify("Opslaan mislukt: " + e.message); }
+  };
+  document.querySelectorAll('.codedel').forEach(el => {
+    el.onclick = async () => {
+      if (!confirm(`Code ${el.dataset.code} verwijderen?`)) return;
+      try{ await deleteDoc(doc(db, "codes", el.dataset.code)); notify("Code verwijderd"); }
+      catch(e){ notify("Verwijderen mislukt: " + e.message); }
+    };
+  });
+
   const mailUit = () => {
     const uit = { ...mailSettings() };
     document.querySelectorAll('.mailfield').forEach(el => { uit[el.dataset.key] = el.value.trim(); });
@@ -5089,6 +5742,19 @@ function attachPricingHandlers(){
     });
     out.slicer = slicer;
     try{ await saveMail(mailUit()); }catch(e){ notify("E-mailinstellingen niet bewaard: " + e.message); }
+    if (state.__draftPickup){
+      const p = state.__draftPickup;
+      try{
+        await savePickup({
+          enabled: !!p.enabled, address: p.address || "", note: p.note || "",
+          slotMinutes: Math.max(10, p.slotMinutes || 30),
+          leadHours: Math.max(0, p.leadHours ?? 24),
+          weeks: Math.min(8, Math.max(1, p.weeks || 2)),
+          days: (p.days || []).map(d => ({ day: +d.day || 1, from: d.from || "17:00", to: d.to || "20:00" })),
+        });
+        state.__draftPickup = null;
+      }catch(e){ notify("Afhaalinstellingen niet bewaard: " + e.message); }
+    }
     const tiers = (out.discountTiers || []).map(t => ({ ...t }));
     document.querySelectorAll('.tierfield').forEach(el=>{
       const i = parseInt(el.dataset.i,10);
@@ -5119,11 +5785,16 @@ window.__editProduct = (id) => {
   state.__editing = id;
   state.__draftImages = productImages(p).slice();
   state.__draftSlots = colorSlots(p).map(sl => ({ ...sl }));
+  state.__draftModel = undefined;          // wat er al staat, blijft staan
   state.__adminTab = "products";
   render();
   window.scrollTo(0,0);
 };
-window.__cancelEdit = () => { state.__editing = null; state.__draftImages = []; state.__draftSlots = null; render(); };
+window.__cancelEdit = () => {
+  state.__editing = null; state.__draftImages = []; state.__draftSlots = null;
+  state.__draftModel = undefined;
+  render();
+};
 window.__removeDraftImage = (i) => { state.__draftImages.splice(i,1); renderImageTray(); };
 
 function renderImageTray(){
@@ -5205,6 +5876,30 @@ function attachAdminHandlers(){
     }
   };
 
+  // 3D-voorbeeld: inlezen gebeurt hier, bewaren pas bij het opslaan van het
+  // product — anders staat er een model bij een product dat nooit ontstaat.
+  const modelKies = document.getElementById('pickModelBtn');
+  if (modelKies) modelKies.onclick = () => document.getElementById('pModelFile').click();
+  const modelInput = document.getElementById('pModelFile');
+  if (modelInput) modelInput.onchange = async (e) => {
+    const f = (e.target.files || [])[0];
+    e.target.value = "";
+    if (!f) return;
+    const stand = document.getElementById('modelStand');
+    if (stand) stand.textContent = "inlezen…";
+    try{
+      state.__draftModel = voorbeeldUitDelen(await analyzeFile(f));
+      render();
+      notify(`Model ingelezen — ${state.__draftModel.parts.length} ${state.__draftModel.parts.length > 1 ? "onderdelen" : "onderdeel"}`);
+    }catch(err){
+      state.__draftModel = undefined;
+      render();
+      notify("Kon dit model niet inlezen: " + (err.message || err));
+    }
+  };
+  const modelWis = document.getElementById('wisModelBtn');
+  if (modelWis) modelWis.onclick = () => { state.__draftModel = null; render(); };
+
   const urlBtn = document.getElementById('addImgUrlBtn');
   if (urlBtn) urlBtn.onclick = () => {
     const input = document.getElementById('pImgUrl');
@@ -5250,19 +5945,28 @@ function attachAdminHandlers(){
       images: (state.__draftImages || []).filter(isSafeImageSrc).slice(0, MAX_PRODUCT_IMAGES),
       icon: "cube",
     };
+    // undefined = ongemoeid laten, een model = vervangen, null = weghalen
+    const model = state.__draftModel;
+    if (model !== undefined) data.has3d = !!model;
 
     btn.disabled = true;
     const original = btn.textContent;
     btn.textContent = "Opslaan…";
     try{
+      let id;
       if (state.__editing){
-        await updateProduct(state.__editing, data);
+        id = state.__editing;
+        await updateProduct(id, data);
         state.__editing = null;
       } else {
-        await addProduct(data);
+        id = await addProduct(data);
       }
+      if (model) await bewaarVoorbeeld(id, model);
+      else if (model === null) await wisVoorbeeld(id);
+      if (model !== undefined) voorbeeldCache.delete(id);
       state.__draftImages = [];
       state.__draftSlots = null;
+      state.__draftModel = undefined;
       render();
       window.scrollTo(0,0);
     }catch(err){
@@ -5279,6 +5983,7 @@ window.__lc = {
   get state(){ return state; },
   sliceMesh, partSlice, partEstimate, projectTotals,
   pricing, slicerSettings, render,
+  slotFilament, currentFilament,
 };
 
 /* --------------------------- boot --------------------------- */
@@ -5286,6 +5991,7 @@ listenMail();     // ook een klant moet post kunnen krijgen
 listenProducts();
 listenFilaments();
 listenPricing();
+listenPickup();
 renderAuthNav();
 render();
 </script>

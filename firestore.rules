@@ -37,6 +37,29 @@ service cloud.firestore {
       allow write: if beheerder();
     }
 
+    // --- 3D-voorbeelden bij een product ----------------------------
+    // Het model dat de klant op de productpagina kan draaien. Iedereen mag het
+    // zien, alleen de beheerder zet het erbij of haalt het weg.
+    match /previews/{id} {
+      allow read: if true;
+      allow write: if beheerder();
+    }
+
+    // --- kortingscodes ---------------------------------------------
+    // Je kunt een code alleen opvragen als je hem al kent: de naam van het
+    // document ís de code. De hele lijst opvragen mag alleen de beheerder,
+    // anders kon iedereen alle codes uitlezen. Een klant mag bij het bestellen
+    // één gebruik bijtellen — verder niets aan de code veranderen.
+    match /codes/{code} {
+      allow get: if true;
+      allow list: if beheerder();
+      allow create, delete: if beheerder();
+      allow update: if beheerder()
+        || (ingelogd()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used'])
+            && request.resource.data.used == resource.data.used + 1);
+    }
+
     // --- instellingen: filamenten, prijzen, e-mail -----------------
     // De klant moet de filamenten en prijzen kunnen lezen om te bestellen.
     match /settings/{id} {
