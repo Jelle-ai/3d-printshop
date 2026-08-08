@@ -21,8 +21,11 @@ klanten lezen.
 
 ## 2. Authenticatie
 
-Niets te doen. E-mail/wachtwoord en de bevestigingsmail van Firebase zijn
-gratis en verlopen niet.
+Niets te doen. Inloggen met e-mail en wachtwoord is gratis en verloopt niet.
+
+Er wordt niet gecontroleerd of een e-mailadres echt bestaat. Iemand kan zich
+dus aanmelden met het adres van een ander; die krijgt dan de bestelmails. Kom
+je dat tegen, dan zie je het aan de bestelling in Shopbeheer.
 
 ## 3. Opslag van de modellen
 
@@ -50,9 +53,6 @@ voor de hand) en een klein stukje server, want een betaling mag je nooit in de
 browser afronden — anders kan iemand zichzelf op "betaald" zetten.
 
 ## 6. E-mail
-
-De bevestiging van een e-mailadres loopt via Firebase en werkt al — daar hoef
-je niets voor te doen.
 
 De bestelbevestiging en de berichten bij *verzonden* en *geleverd* lopen via
 EmailJS: gratis tot 200 berichten per maand.
