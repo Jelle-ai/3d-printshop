@@ -256,7 +256,26 @@
     position:absolute;right:8px;bottom:8px;color:var(--paper);opacity:.55;
     font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
   }
-    .viewer-toggle{
+    /* kleurvakken: één per benoemd stuk van het model */
+  .slot{border:1px solid var(--line);border-radius:11px;margin-bottom:8px;overflow:hidden;background:var(--surface);}
+  .slot.open{border-color:var(--accent);}
+  .slot-head{
+    display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;
+    background:none;border:none;cursor:pointer;color:inherit;text-align:left;
+  }
+  .slot-head:hover{background:var(--surface2);}
+  .slot-head .fil-chip{width:22px;height:22px;border-radius:7px;flex-shrink:0;}
+  .slot-name{display:block;font-size:13px;font-weight:600;}
+  .slot-fil{display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);}
+  .slot-caret{color:var(--muted);flex-shrink:0;}
+  .slot-body{padding:0 12px 12px;}
+  /* korting */
+  .sale-flag{
+    display:inline-block;background:var(--accent);color:#fff;border-radius:999px;
+    padding:2px 8px;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.06em;
+  }
+  .was{color:var(--muted);text-decoration:line-through;font-weight:400;margin-right:6px;}
+  .viewer-toggle{
     position:absolute;right:8px;top:8px;padding:5px 10px;font-size:11px;
     background:rgba(20,20,20,.72);color:var(--paper);border-color:rgba(255,255,255,.22);
     backdrop-filter:blur(3px);
@@ -453,7 +472,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  onAuthStateChanged, signOut
+  onAuthStateChanged, signOut, sendEmailVerification, reload
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, collection, doc, setDoc, getDoc, addDoc, updateDoc, deleteDoc,
@@ -708,7 +727,13 @@ async function doRegister(name, email, password, address){
     await setDoc(doc(db, "users", cred.user.uid), profile);
     state.profile = profile;
     renderAuthNav();
-    notify("Account aangemaakt — welkom " + name);
+    // Firebase stuurt zelf een bevestigingsmail; die is gratis en betrouwbaar.
+    try{
+      await sendEmailVerification(cred.user, { url: SITE_URL });
+      notify("Account aangemaakt — kijk in je mail om je adres te bevestigen");
+    }catch(e){
+      notify("Account aangemaakt — welkom " + name);
+    }
     go("shop");
   }catch(e){
     notify("Fout: " + (e.message || e));
@@ -1980,9 +2005,11 @@ async function placeOrder(shippingCountry, address, payment){
   const order = {
     uid: state.user.uid,
     userEmail: state.user.email,
-    items: state.cart.map(({id,productId,kind,name,price,qty,filament,dims,printTime,grams,jobParts,assembled,uploadId,sliced})=>({
+    items: state.cart.map(({id,productId,kind,name,price,qty,filament,dims,printTime,grams,jobParts,assembled,uploadId,sliced,colorChoices,listPrice,discountPct})=>({
       id, productId: productId || id, kind, name, price, qty,
       filament: filament || null, dims: dims || null,
+      colorChoices: colorChoices || null,
+      listPrice: listPrice ?? null, discountPct: discountPct || 0,
       printTime: printTime || null, grams: grams || null,
       jobParts: jobParts || null, assembled: assembled || false,
       uploadId: uploadId || null,
@@ -1999,15 +2026,122 @@ async function placeOrder(shippingCountry, address, payment){
     createdAt: Date.now(),
   };
   try{
-    await addDoc(collection(db,"orders"), order);
+    const ref = await addDoc(collection(db,"orders"), order);
     state.cart = []; saveCart();
     state.__checkout = null;
     notify("Betaald met testgeld — bestelling geplaatst!");
     go("account");
+    mailBestelling({ id: ref.id, ...order });   // mag rustig achteraf komen
   }catch(e){ notify("Bestellen mislukt: " + e.message); }
 }
 async function setOrderStatus(orderId, status){
   await updateDoc(doc(db,"orders",orderId), { status });
+  const o = state.orders.find(x => x.id === orderId);
+  if (!o) return;
+  if (status === "Verzonden") mailVerzonden({ ...o, status });
+  if (status === "Geleverd")  mailGeleverd({ ...o, status });
+}
+
+/* =====================================================================
+   E-mail
+   Een website op GitHub Pages kan zelf geen post versturen — daar hoort een
+   server bij. We gebruiken daarom EmailJS: dat is gemaakt om vanuit de
+   browser te versturen, met een sleutel die openbaar mag zijn. Vul je niets
+   in, dan slaat de shop het versturen gewoon over en werkt de rest normaal.
+   Instellen kan bij Beheer → Prijzen → E-mail.
+   ===================================================================== */
+const MAIL_DOC = () => doc(db, "settings", "mail");
+const DEFAULT_MAIL = {
+  serviceId: "", publicKey: "",
+  tplOrder: "", tplShipped: "", tplDelivered: "",
+  fromName: "LayerCraft", replyTo: "",
+};
+function mailSettings(){ return { ...DEFAULT_MAIL, ...(state.mail || {}) }; }
+function mailReady(k){
+  const m = mailSettings();
+  return !!(m.serviceId && m.publicKey && m[k]);
+}
+function listenMail(){
+  if (state.__mailListening) return;
+  state.__mailListening = true;
+  onSnapshot(MAIL_DOC(), (snap) => {
+    state.mail = snap.exists() ? snap.data() : null;
+    if (state.view === "admin") render();
+  }, () => { /* niets ingesteld: versturen wordt overgeslagen */ });
+}
+async function saveMail(values){ await setDoc(MAIL_DOC(), values); }
+
+/* Stuurt één bericht. Faalt dit, dan mag de bestelling er niet onder lijden —
+   we melden het en gaan verder. */
+async function sendMail(tplKey, params){
+  const m = mailSettings();
+  if (!mailReady(tplKey)) return { ok: false, reason: "niet ingesteld" };
+  try{
+    const res = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        service_id: m.serviceId,
+        template_id: m[tplKey],
+        user_id: m.publicKey,
+        template_params: { from_name: m.fromName, reply_to: m.replyTo || undefined, ...params },
+      }),
+    });
+    if (!res.ok) return { ok: false, reason: (await res.text()).slice(0, 140) };
+    return { ok: true };
+  }catch(err){
+    return { ok: false, reason: err.message };
+  }
+}
+
+const SITE_URL = location.origin + location.pathname;
+
+/* De bestelling als leesbare regels, want een e-mail heeft geen opmaak nodig
+   om duidelijk te zijn. */
+function mailOrderLines(o){
+  return (o.items || []).map(i => {
+    const kleuren = Array.isArray(i.colorChoices) && i.colorChoices.length
+      ? "  (" + i.colorChoices.map(c => `${c.slot}: ${c.name}`).join(", ") + ")"
+      : i.filament ? `  (${i.filament.type} ${i.filament.name})` : "";
+    return `${i.qty} × ${i.name}${kleuren} — ${fmtEUR(i.price * i.qty)}`;
+  }).join("\n");
+}
+function mailOrderParams(o){
+  const a = o.shippingAddress || {};
+  return {
+    to_email: o.userEmail,
+    to_name: (o.userEmail || "").split("@")[0],
+    order_number: orderNumber(o),
+    order_date: new Date(o.createdAt).toLocaleDateString("nl-BE", { day:"numeric", month:"long", year:"numeric" }),
+    order_lines: mailOrderLines(o),
+    order_subtotal: fmtEUR(o.subtotal ?? 0),
+    order_shipping: fmtEUR(o.shippingCost ?? 0),
+    order_total: fmtEUR(o.total ?? 0),
+    order_status: o.status || "",
+    address: [a.street, `${a.zip || ""} ${a.city || ""}`.trim(), o.shippingCountry].filter(Boolean).join("\n"),
+    site_url: SITE_URL,
+    account_url: SITE_URL,
+  };
+}
+async function mailBestelling(o){
+  const r = await sendMail("tplOrder", mailOrderParams(o));
+  if (!r.ok && r.reason !== "niet ingesteld") console.warn("bevestigingsmail niet verstuurd:", r.reason);
+}
+async function mailVerzonden(o){
+  const w = deliveryWindow(o);
+  const r = await sendMail("tplShipped", {
+    ...mailOrderParams(o),
+    delivery_from: fmtDate(w.from), delivery_to: fmtDate(w.to),
+  });
+  if (!r.ok && r.reason !== "niet ingesteld") notify("Verzendmail niet verstuurd: " + r.reason);
+}
+async function mailGeleverd(o){
+  const r = await sendMail("tplDelivered", {
+    ...mailOrderParams(o),
+    // hier klikt de klant op om de ontvangst te bevestigen
+    confirm_url: SITE_URL,
+  });
+  if (!r.ok && r.reason !== "niet ingesteld") notify("Ontvangstmail niet verstuurd: " + r.reason);
 }
 
 /* --------------------------- products admin --------------------------- */
@@ -2075,9 +2209,21 @@ function addToCart(item){
   saveCart();
   notify(item.name + " toegevoegd");
   renderCartBadge();
+  // op de productpagina hangt de knop af van wat er nog op voorraad is
+  if (state.view === "product") render();
 }
 function removeFromCart(id,kind){ state.cart = state.cart.filter(x=>!(x.id===id&&x.kind===kind)); saveCart(); render(); }
-function setQty(id,kind,qty){ const it=state.cart.find(x=>x.id===id&&x.kind===kind); if(it) it.qty=Math.max(1,qty); saveCart(); render(); }
+function setQty(id,kind,qty){
+  const it = state.cart.find(x=>x.id===id&&x.kind===kind);
+  if (!it) return;
+  const p = state.products.find(x => x.id === (it.productId || it.id));
+  // niet meer dan er op voorraad ligt; op maat gemaakte producten zijn vrij
+  const max = (p && !sizingOf(p)) ? Math.max(1, Number(p.stock) || 0) : 999;
+  const nieuw = Math.min(max, Math.max(1, qty));
+  if (nieuw !== qty && qty > max) notify(`Er zijn er nog maar ${max} op voorraad`);
+  it.qty = nieuw;
+  saveCart(); render();
+}
 window.__addToCart = addToCart; window.__removeFromCart = removeFromCart; window.__setQty = setQty;
 
 /* --------------------------- render: menu --------------------------- */
@@ -2170,7 +2316,7 @@ function render(){
     case "checkout": app.innerHTML = viewCheckout(); attachCheckoutHandlers(); return;
     case "payment": app.innerHTML = viewPayment(); attachPaymentHandlers(); return;
     case "login": app.innerHTML = viewAuth(state.__authMode || "login"); attachAuthHandlers(); return;
-    case "account": app.innerHTML = viewAccount(); break;
+    case "account": app.innerHTML = viewAccount(); attachShopHandlers(); attachVerifyHandlers(); return;
     case "admin": app.innerHTML = viewAdmin(); attachAdminHandlers(); return;
   }
   attachShopHandlers();
@@ -2179,14 +2325,19 @@ function render(){
 function viewShop(){
   const cards = state.products.map(p => `
     <button class="card rel" data-open="${p.id}">
-      <div class="thumb rel">${productThumb(p)}${p.featured ? `<span class="flag">Uitgelicht</span>` : ``}</div>
+      <div class="thumb rel">
+        ${productThumb(p)}
+        ${p.featured ? `<span class="flag">Uitgelicht</span>` : ``}
+        ${discountOf(p) ? `<span class="flag" style="left:auto;right:10px;background:var(--accent);color:#fff;">&minus;${discountOf(p).pct}%</span>` : ``}
+      </div>
       <div>
         <div class="card-title">${esc(p.name)}</div>
-        <div class="label" style="margin-top:5px;">${esc(p.material||"")}${p.layerHeight ? " / " + esc(p.layerHeight) : ""}</div>
+        <div class="label" style="margin-top:5px;">${esc(p.material||"")}${p.layerHeight ? " / " + esc(p.layerHeight) : ""}${colorSlots(p).length ? ` / ${colorSlots(p).length} kleuren` : ""}</div>
         <div class="between" style="margin-top:8px;">
-          <span class="price">${sizingOf(p) ? "vanaf " : ""}${fmtEUR(sizingOf(p) ? basePriceOf(p) : p.price)}</span>
+          <span class="price">${sizingOf(p) ? "vanaf " + fmtEUR(basePriceOf(p)) : priceWithDiscount(p)}</span>
           ${sizingOf(p) ? `<span class="label">Op maat</span>`
-            : p.stock > 0 ? `` : `<span class="label">Uitverkocht</span>`}
+            : (p.stock ?? 0) <= 0 ? `<span class="label">Uitverkocht</span>`
+            : (p.stock ?? 0) <= 3 ? `<span class="label">Nog ${esc(p.stock)}</span>` : ``}
         </div>
       </div>
     </button>`).join("");
@@ -2340,8 +2491,50 @@ function priceBreakdown(est){
 }
 
 /* De prijs die op de pagina en in de winkelwagen geldt. */
-function productPrice(p){
+/* =====================================================================
+   Korting en voorraad
+   Een korting geldt op de gewone prijs en mag een einddatum hebben. Is die
+   datum voorbij, dan valt de korting vanzelf weg — je hoeft er dus niet aan
+   te denken om hem uit te zetten.
+   ===================================================================== */
+function discountOf(p){
+  const pct = Math.min(90, Math.max(0, Number(p?.discountPct) || 0));
+  if (!pct) return null;
+  if (p.discountUntil && Date.now() > p.discountUntil) return null;
+  return { pct, until: p.discountUntil || null };
+}
+/* De prijs zonder korting. */
+function listPrice(p){
   return sizingOf(p) ? sizedEstimate(p).unit : p.price;
+}
+function productPrice(p){
+  const vol = listPrice(p);
+  const k = discountOf(p);
+  if (!k) return vol;
+  return Math.max(0, Math.round(vol * (100 - k.pct)) / 100);
+}
+/* Het kortingsplaatje op een kaart of productpagina. */
+function discountBadge(p){
+  const k = discountOf(p);
+  if (!k) return "";
+  return `<span class="sale-flag">&minus;${k.pct}%</span>`;
+}
+function priceWithDiscount(p){
+  const k = discountOf(p);
+  const nu = `<span class="now">${fmtEUR(productPrice(p))}</span>`;
+  if (!k) return nu;
+  return `<span class="was">${fmtEUR(listPrice(p))}</span> ${nu}`;
+}
+
+/* Hoeveel er nog besteld kan worden: de voorraad min wat al in de wagen ligt.
+   Op maat gemaakte producten worden altijd geprint en kennen geen voorraad. */
+function stockLeft(p){
+  if (sizingOf(p)) return Infinity;
+  const voorraad = Math.max(0, Number(p?.stock) || 0);
+  const inMand = state.cart
+    .filter(i => (i.productId || i.id) === p.id && i.kind === "product")
+    .reduce((s, i) => s + i.qty, 0);
+  return Math.max(0, voorraad - inMand);
 }
 /* De prijs bij de kleinst toegestane maat — dat is de "vanaf"-prijs. */
 function basePriceOf(p){
@@ -2391,7 +2584,77 @@ function currentFilament(p){
   if (!list.length) return null;
   return list.find(f => f.id === state.__filament) || list[0];
 }
+/* =====================================================================
+   Kleurvakken
+   Sommige modellen bestaan uit benoemde stukken die je apart wilt kunnen
+   kleuren: mond geel, arm blauw. Elk vak krijgt zijn eigen keuzemenu; de
+   klant klapt er één open tegelijk, zodat het overzichtelijk blijft.
+   ===================================================================== */
+function colorSlots(p){
+  const s = Array.isArray(p?.colorSlots) ? p.colorSlots.filter(x => x && x.name) : [];
+  return s.slice(0, 10);
+}
+/* De keuze per vak, met de standaardkleur van het product als terugval. */
+function slotFilament(p, i){
+  const list = availableFilaments(p);
+  if (!list.length) return null;
+  const gekozen = (state.__slotFil || {})[i];
+  const standaard = colorSlots(p)[i]?.filamentId;
+  return list.find(f => f.id === gekozen) || list.find(f => f.id === standaard) || list[0];
+}
+function slotPicker(p){
+  const slots = colorSlots(p);
+  const list = availableFilaments(p);
+  if (!list.length){
+    return `<div class="fil-block"><p class="muted" style="font-size:13px;margin:0;">Er zijn nog geen filamenten ingeschakeld.</p></div>`;
+  }
+  const open = state.__openSlot ?? 0;
+  return `
+    <div class="fil-block">
+      <div class="between" style="margin-bottom:10px;">
+        <span class="font-display" style="font-size:14px;">Kleuren</span>
+        <span class="muted font-mono" style="font-size:10px;">${slots.length} ONDERDELEN · BAMBU LAB</span>
+      </div>
+      <p class="muted" style="font-size:12px;margin:0 0 12px;">
+        Dit model bestaat uit meerdere stukken. Kies voor elk stuk een eigen kleur.
+      </p>
+      ${slots.map((s, i) => {
+        const f = slotFilament(p, i);
+        const uit = open === i;
+        const types = filamentTypes(list);
+        const actief = uit && types.includes(state.__slotType) ? state.__slotType : f.type;
+        const kleuren = list.filter(x => x.type === actief);
+        return `
+          <div class="slot ${uit ? 'open' : ''}">
+            <button class="slot-head" data-slot="${i}">
+              <span class="fil-chip ${finishClass(f.finish)}" style="background-color:${esc(f.hex)};"></span>
+              <span style="flex:1;min-width:0;text-align:left;">
+                <span class="slot-name">${esc(s.name)}</span>
+                <span class="slot-fil">${esc(f.name)} &middot; ${esc(f.type)}</span>
+              </span>
+              ${ic(uit ? "chevron-up" : "chevron-down", "slot-caret")}
+            </button>
+            ${uit ? `
+              <div class="slot-body">
+                <div class="fil-types">
+                  ${types.map(t=>`<button class="fil-type ${t===actief?'active':''}" data-slottype="${esc(t)}">${esc(t)}</button>`).join("")}
+                </div>
+                <div class="swatches">
+                  ${kleuren.map(x=>`
+                    <button class="swatch ${finishClass(x.finish)} ${x.id===f.id?'active':''}"
+                            data-slotfil="${i}" data-fil="${esc(x.id)}" title="${esc(x.name)} — ${esc(x.hex)}"
+                            style="background-color:${esc(x.hex)};">
+                      ${x.id===f.id ? `<span class="tick" style="color:${esc(readableOn(x.hex))}"><i class="fa-solid fa-check" aria-hidden="true"></i></span>` : ``}
+                    </button>`).join("")}
+                </div>
+              </div>` : ``}
+          </div>`;
+      }).join("")}
+    </div>`;
+}
+
 function filamentPicker(p){
+  if (colorSlots(p).length) return slotPicker(p);
   const list = availableFilaments(p);
   if (!list.length){
     return `<div class="fil-block"><p class="muted" style="font-size:13px;margin:0;">Er zijn nog geen filamenten ingeschakeld.</p></div>`;
@@ -2464,6 +2727,8 @@ function viewProduct(){
   const sizing = sizingOf(p);
   const est = sizing ? sizedEstimate(p) : null;
   const inStock = sizing ? true : (p.stock ?? 0) > 0;   // op maat wordt altijd geprint
+  const rest = stockLeft(p);                            // wat er nog bij kan
+  const korting = discountOf(p);
   return `
     <div style="padding:32px 0;">
       <button class="back" onclick="go('shop')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Terug naar collectie</button>
@@ -2478,11 +2743,19 @@ function viewProduct(){
         <div>
           ${p.category ? `<span class="badge badge-accent">${esc(p.category)}</span>` : ``}
           <h1 class="font-display" style="font-size:24px;margin:0 0 10px;">${esc(p.name)}</h1>
-          <p class="price" style="font-size:26px;margin:0 0 4px;">${fmtEUR(productPrice(p))}</p>
+          <p class="price" style="font-size:26px;margin:0 0 4px;">
+            ${priceWithDiscount(p)} ${discountBadge(p)}
+          </p>
+          ${korting ? `<p class="muted" style="font-size:12px;margin:0 0 6px;">
+            Tijdelijk ${korting.pct}% korting${korting.until ? ` — nog tot ${esc(new Date(korting.until).toLocaleDateString('nl-BE', { day:'numeric', month:'long' }))}` : ``}.
+          </p>` : ``}
           <p style="font-size:12px;margin:0 0 16px;" class="muted">
             ${sizing
               ? `<span class="stock-dot" style="background:var(--accent)"></span>Op maat geprint`
-              : `<span class="stock-dot" style="background:${inStock ? 'var(--accent)' : 'var(--muted)'}"></span>${inStock ? esc(p.stock) + " op voorraad" : "Niet op voorraad"}`}
+              : `<span class="stock-dot" style="background:${inStock ? 'var(--accent)' : 'var(--muted)'}"></span>${
+                  !inStock ? "Niet op voorraad"
+                  : rest === 0 ? `Je hebt de laatste ${esc(p.stock)} al in je winkelwagen`
+                  : rest <= 3 ? `Nog maar ${rest} op voorraad` : esc(p.stock) + " op voorraad"}`}
           </p>
           ${p.description ? `<p style="font-size:14px;line-height:1.6;color:var(--ink);opacity:.85;">${esc(p.description)}</p>` : ``}
           ${sizing ? sizingBlock(p) : ``}
@@ -2491,7 +2764,10 @@ function viewProduct(){
           ${specs ? `<div class="spec-grid">${specs}</div>` : ``}
           <div class="row" style="margin-top:18px;">
             <div class="stepper"><button id="qMinus"><i class="fa-solid fa-minus" aria-hidden="true"></i></button><span id="qVal">1</span><button id="qPlus"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div>
-            <button class="btn btn-accent" id="addBtn" ${inStock ? "" : "disabled style=\"opacity:.5;\""}><i class="fa-solid fa-cart-plus" aria-hidden="true"></i> Toevoegen</button>
+            <button class="btn btn-accent" id="addBtn" ${inStock && rest > 0 ? "" : "disabled style=\"opacity:.5;\""}>
+              <i class="fa-solid fa-cart-plus" aria-hidden="true"></i>
+              ${!inStock ? "Uitverkocht" : rest === 0 ? "Alles al in je wagen" : "Toevoegen"}
+            </button>
           </div>
           <p class="footer-note"><i class="fa-solid fa-print" aria-hidden="true"></i> Wordt op bestelling geprint — verzending binnen 3 tot 5 werkdagen.</p>
         </div>
@@ -2504,8 +2780,12 @@ function attachProductHandlers(){
   // Vlak na een herlaadbeurt zijn de producten er nog niet en staat er alleen
   // een melding; dan valt er ook niets aan te haken.
   if (!qv) return;
+  const maxQty = () => { const r = stockLeft(state.selectedProduct); return isFinite(r) ? Math.max(1, r) : 999; };
   document.getElementById('qMinus').onclick = ()=>{ qty=Math.max(1,qty-1); qv.textContent=qty; };
-  document.getElementById('qPlus').onclick = ()=>{ qty++; qv.textContent=qty; };
+  document.getElementById('qPlus').onclick = ()=>{
+    if (qty >= maxQty()){ notify(`Er zijn er nog maar ${maxQty()} beschikbaar`); return; }
+    qty++; qv.textContent=qty;
+  };
   document.querySelectorAll('[data-img]').forEach(btn=>{
     btn.onclick = () => { state.__gallery = parseInt(btn.dataset.img,10) || 0; render(); };
   });
@@ -2519,9 +2799,24 @@ function attachProductHandlers(){
       render();
     };
   });
+  document.querySelectorAll('[data-slot]').forEach(btn=>{
+    btn.onclick = () => {
+      const i = parseInt(btn.dataset.slot, 10);
+      state.__openSlot = state.__openSlot === i ? -1 : i;
+      state.__slotType = null;
+      render();
+    };
+  });
+  document.querySelectorAll('[data-slottype]').forEach(btn=>{
+    btn.onclick = () => { state.__slotType = btn.dataset.slottype; render(); };
+  });
   document.querySelectorAll('[data-fil]').forEach(btn=>{
     btn.onclick = () => {
-      state.__filament = btn.dataset.fil;
+      if (btn.dataset.slotfil !== undefined){
+        state.__slotFil = { ...(state.__slotFil || {}), [parseInt(btn.dataset.slotfil,10)]: btn.dataset.fil };
+      } else {
+        state.__filament = btn.dataset.fil;
+      }
       state.__gallery = 0; // toon meteen het kleurvoorbeeld
       render();
     };
@@ -2538,17 +2833,28 @@ function attachProductHandlers(){
   const add = document.getElementById('addBtn');
   if (add) add.onclick = ()=>{
     const p = state.selectedProduct;
-    const f = currentFilament(p);
+    const slots = colorSlots(p);
+    const keuzes = slots.map((s, i) => {
+      const x = slotFilament(p, i);
+      return { slot: s.name, id: x?.id, type: x?.type, name: x?.name, hex: x?.hex, finish: x?.finish };
+    });
+    const f = slots.length ? slotFilament(p, 0) : currentFilament(p);
+    const rest = stockLeft(p);
+    if (rest <= 0){ notify("Dit product is niet meer op voorraad"); return; }
+    if (qty > rest){ qty = rest; qv.textContent = qty; notify(`Aangepast naar ${rest} — meer zijn er niet`); }
     const sizing = sizingOf(p);
     const dims = sizing ? currentDims(p) : null;
     const est = sizing ? sizedEstimate(p) : null;
     addToCart({
       // kleur én maat maken de regel uniek, zodat twee varianten niet samensmelten
-      id: [p.id, f?.id, dims?.join("x")].filter(Boolean).join("::"),
+      id: [p.id, keuzes.length ? keuzes.map(k=>k.id).join("+") : f?.id, dims?.join("x")].filter(Boolean).join("::"),
       productId: p.id,
-      kind: "product", name: p.name, price: est ? est.unit : p.price, qty,
+      kind: "product", name: p.name, price: est ? est.unit : productPrice(p), qty,
+      listPrice: est ? null : listPrice(p),
+      discountPct: discountOf(p)?.pct || 0,
       dims, printTime: est ? Math.round(est.seconds) : null, grams: est ? +est.grams.toFixed(1) : null,
       filament: f ? { id:f.id, type:f.type, name:f.name, hex:f.hex, finish:f.finish } : null,
+      colorChoices: keuzes.length ? keuzes : null,
     });
   };
 }
@@ -3322,6 +3628,18 @@ async function addJobToCart(btn){
   }
 }
 
+/* De gekozen kleur per benoemd stuk, kort weergegeven. */
+function colorChoiceLine(it){
+  if (!Array.isArray(it.colorChoices) || !it.colorChoices.length) return "";
+  return `<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:3px;">
+    ${it.colorChoices.map(c => `
+      <span class="row" style="gap:4px;">
+        <span class="fil-chip ${finishClass(c.finish)}" style="width:11px;height:11px;border-radius:3px;background-color:${esc(c.hex||"#888")};"></span>
+        <span class="muted font-mono" style="font-size:10px;">${esc(c.slot)}: ${esc(c.name||"")}</span>
+      </span>`).join("")}
+  </div>`;
+}
+
 /* De vorm van het bijbehorende product, zodat het kleurvoorbeeld in de
    winkelwagen hetzelfde object toont als op de productpagina. */
 function cartShape(it){
@@ -3356,7 +3674,12 @@ function viewCart(){
               ${it.jobParts.map(j => `${j.qty}× ${esc(j.name)}`).join(" · ")}
               ${it.assembled ? " · geassembleerd" : " · los geleverd"}
             </div>` : ``}
-          <div class="muted font-mono" style="font-size:11px;">${it.needsQuote ? "prijs op aanvraag" : fmtEUR(it.price) + " / stuk"}</div>
+          ${colorChoiceLine(it)}
+          <div class="muted font-mono" style="font-size:11px;">
+            ${it.needsQuote ? "prijs op aanvraag"
+              : it.discountPct ? `<span class="was">${fmtEUR(it.listPrice)}</span>${fmtEUR(it.price)} / stuk <span class="sale-flag">&minus;${it.discountPct}%</span>`
+              : fmtEUR(it.price) + " / stuk"}
+          </div>
         </div>
       </div>
       <div class="stepper">
@@ -3642,6 +3965,41 @@ function orderCard(o){
     </div>`;
 }
 
+/* Zolang het e-mailadres niet bevestigd is, staat er een balkje met de kans
+   om de mail opnieuw te laten sturen. */
+function verifyNotice(){
+  const u = state.user;
+  if (!u || u.emailVerified) return "";
+  return `
+    <div class="cart-item" style="border-color:var(--accent);margin:14px 0;">
+      <p style="font-size:13px;margin:0 0 6px;font-weight:600;">${ic("envelope")} Bevestig je e-mailadres</p>
+      <p class="muted" style="font-size:12px;margin:0 0 10px;">
+        We stuurden een bericht naar ${esc(u.email || "")}. Klik op de link erin, zodat we zeker weten
+        dat we je op dit adres kunnen bereiken over je bestellingen.
+      </p>
+      <div class="row">
+        <button class="btn btn-ghost btn-sm" id="resendVerifyBtn">Opnieuw sturen</button>
+        <button class="btn btn-ghost btn-sm" id="checkVerifyBtn">Ik heb geklikt</button>
+      </div>
+    </div>`;
+}
+function attachVerifyHandlers(){
+  const opnieuw = document.getElementById('resendVerifyBtn');
+  if (opnieuw) opnieuw.onclick = async () => {
+    opnieuw.disabled = true;
+    try{ await sendEmailVerification(state.user, { url: SITE_URL }); notify("Bericht opnieuw verstuurd"); }
+    catch(e){ notify("Versturen mislukt: " + (e.message || e)); opnieuw.disabled = false; }
+  };
+  const na = document.getElementById('checkVerifyBtn');
+  if (na) na.onclick = async () => {
+    try{
+      await reload(state.user);
+      if (state.user.emailVerified){ notify("Bedankt — je adres is bevestigd"); render(); }
+      else notify("Nog niet bevestigd — klik eerst op de link in de mail");
+    }catch(e){ notify("Nakijken mislukt: " + (e.message || e)); }
+  };
+}
+
 function viewAccount(){
   if (!state.user){
     return `<div style="padding:32px 0;"><p class="muted">Je bent niet ingelogd.</p><button class="btn btn-accent" onclick="go('login')">Inloggen</button></div>`;
@@ -3657,6 +4015,7 @@ function viewAccount(){
       ${state.profile?.isAdmin ? `<span class="badge badge-accent">Beheerder</span>` : ``}
       ${a.street ? `<p class="muted" style="font-size:12px;margin:8px 0 0;">${esc(a.street)}, ${esc(a.zip||'')} ${esc(a.city||'')}</p>` : ``}
       ${state.profileError ? `<p class="muted" style="font-size:12px;margin-top:8px;color:var(--accent);">Je profielgegevens konden niet geladen worden — je blijft wel ingelogd.</p>` : ``}
+      ${verifyNotice()}
       ${state.ordersError ? `
         <div class="cart-item" style="border-color:var(--accent);margin-top:14px;">
           <p style="font-size:13px;margin:0 0 6px;color:var(--accent);font-weight:600;">Je bestellingen konden niet geladen worden</p>
@@ -3680,6 +4039,34 @@ function viewAccount(){
         <button class="btn btn-ghost btn-sm" onclick="go('shop')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Terug naar de shop</button>
         <button class="btn btn-ghost btn-sm" onclick="window.__logout()">Uitloggen</button>
       </div>
+    </div>`;
+}
+
+/* Kleurvakken instellen: benoemde stukken die de klant apart kan kleuren.
+   Wat je hier invult, ziet de klant terug als een eigen keuzemenu. */
+function slotAdminBlock(ed){
+  const slots = state.__draftSlots || colorSlots(ed || {});
+  const list = availableFilaments(null);
+  return `
+    <div class="cart-item" style="margin:0 0 12px;padding:12px;">
+      <div class="between" style="margin-bottom:6px;">
+        <span class="font-display" style="font-size:13px;">Kleuren per onderdeel</span>
+        <button class="btn btn-ghost btn-sm" id="addSlotBtn">${ic("plus")} Onderdeel</button>
+      </div>
+      <p class="muted" style="font-size:11px;margin:0 0 10px;">
+        Laat dit leeg voor een model in één kleur. Vul je hier onderdelen in — mond, arm, voet —
+        dan kiest de klant voor elk apart een kleur.
+      </p>
+      ${slots.length ? slots.map((sl, i) => `
+        <div class="row" style="gap:6px;margin-bottom:6px;">
+          <input class="slotname" data-i="${i}" placeholder="Mond" value="${esc(sl.name || '')}" style="margin:0;flex:1;min-width:0;" />
+          <select class="field slotfil" data-i="${i}" style="margin:0;flex:1;min-width:0;">
+            <option value="">standaardkleur…</option>
+            ${list.map(f => `<option value="${esc(f.id)}" ${f.id===sl.filamentId?'selected':''}>${esc(f.type)} · ${esc(f.name)}</option>`).join("")}
+          </select>
+          <button class="btn btn-ghost btn-sm slotdel" data-i="${i}" title="Weg">${ic("trash")}</button>
+        </div>`).join("")
+        : `<p class="muted" style="font-size:12px;margin:0;">Nog geen onderdelen — het model krijgt één kleur.</p>`}
     </div>`;
 }
 
@@ -3784,6 +4171,8 @@ function viewAdmin(){
             <label class="field-label">Naam</label>
             <input id="pName" placeholder="Bijv. Plantenvaas — Spiraal" value="${esc(ed?.name || '')}" />
 
+            ${slotAdminBlock(ed)}
+
             <label class="field-label">Beschrijving</label>
             <textarea id="pDesc" rows="3" placeholder="Waar is het voor, hoe is het geprint, waarom is het leuk?">${esc(ed?.description || '')}</textarea>
 
@@ -3795,6 +4184,14 @@ function viewAdmin(){
               <div>
                 <label class="field-label">Voorraad</label>
                 <input id="pStock" type="number" min="0" placeholder="10" value="${ed?.stock ?? 10}" />
+              </div>
+              <div>
+                <label class="field-label">Korting (%)</label>
+                <input id="pDiscount" type="number" min="0" max="90" step="1" placeholder="0" value="${ed?.discountPct ?? 0}" />
+              </div>
+              <div>
+                <label class="field-label">Korting loopt tot</label>
+                <input id="pDiscountUntil" type="date" value="${ed?.discountUntil ? new Date(ed.discountUntil).toISOString().slice(0,10) : ''}" />
               </div>
               <div>
                 <label class="field-label">Categorie</label>
@@ -4082,6 +4479,52 @@ const SLICER_FIELDS = [
   ["layerSec", "Vaste tijd per laag (s)", 0.1],
 ];
 
+const MAIL_FIELDS = [
+  ["serviceId",   "EmailJS service ID", "service_xxxxxxx"],
+  ["publicKey",   "EmailJS public key", "AbCdEfGh12345"],
+  ["tplOrder",    "Sjabloon: bestelbevestiging", "template_xxxxxxx"],
+  ["tplShipped",  "Sjabloon: verzonden", "template_xxxxxxx"],
+  ["tplDelivered","Sjabloon: geleverd, graag bevestigen", "template_xxxxxxx"],
+  ["fromName",    "Afzendernaam", "LayerCraft"],
+  ["replyTo",     "Antwoordadres", "jelle@mattan.be"],
+];
+function mailAdminBlock(){
+  const m = mailSettings();
+  const aan = !!(m.serviceId && m.publicKey);
+  return `
+    <div class="cart-item" style="margin-bottom:14px;">
+      <h3 class="font-display" style="font-size:14px;margin:0 0 4px;">E-mail</h3>
+      <p class="muted" style="font-size:11px;margin:0 0 10px;max-width:65ch;">
+        Een website kan zelf geen post versturen, daar hoort een server bij. Wij gebruiken
+        EmailJS, dat wél vanuit de browser mag versturen. Maak een gratis account op
+        emailjs.com, koppel je mailadres, maak drie sjablonen aan en zet de codes hieronder.
+        Laat je dit leeg, dan verstuurt de shop niets en werkt de rest gewoon.
+      </p>
+      <div class="between" style="gap:10px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:12px;">
+        <span style="display:flex;align-items:center;gap:8px;">
+          ${ic(aan ? "circle-check" : "circle-xmark")}
+          <span>${aan ? "E-mail staat aan" : "E-mail staat uit"}</span>
+        </span>
+        <button class="btn btn-ghost btn-sm" id="testMailBtn" ${aan ? "" : "disabled style=\"opacity:.5;\""}>Testmail sturen</button>
+      </div>
+      <div class="form-grid">
+        ${MAIL_FIELDS.map(([k,label,ph])=>`
+          <div>
+            <label class="field-label">${esc(label)}</label>
+            <input class="mailfield" data-key="${k}" placeholder="${esc(ph)}" value="${esc(m[k] || "")}" />
+          </div>`).join("")}
+      </div>
+      <p class="muted" style="font-size:11px;margin:8px 0 0;max-width:65ch;">
+        In je sjablonen kun je deze velden gebruiken:
+        <span class="font-mono">to_email, to_name, order_number, order_date, order_lines,
+        order_subtotal, order_shipping, order_total, order_status, address, site_url</span>,
+        bij verzonden ook <span class="font-mono">delivery_from, delivery_to</span>,
+        en bij geleverd <span class="font-mono">confirm_url</span> — daar klikt de klant op
+        om op de website ontvangst te bevestigen.
+      </p>
+    </div>`;
+}
+
 function viewPricingAdmin(){
   const p = pricing();
   const sl = slicerSettings();
@@ -4131,11 +4574,34 @@ function viewPricingAdmin(){
         </div>`).join("")}
     </div>
 
+    ${mailAdminBlock()}
+
     <button class="btn btn-accent" id="savePricingBtn" style="width:100%;">Prijzen opslaan</button>
     <button class="btn btn-ghost btn-sm" id="resetPricingBtn" style="width:100%;margin-top:8px;justify-content:center;">Terug naar de standaardwaarden</button>`;
 }
 
 function attachPricingHandlers(){
+  listenMail();
+  const mailUit = () => {
+    const uit = { ...mailSettings() };
+    document.querySelectorAll('.mailfield').forEach(el => { uit[el.dataset.key] = el.value.trim(); });
+    return uit;
+  };
+  const test = document.getElementById('testMailBtn');
+  if (test) test.onclick = async () => {
+    test.disabled = true; test.textContent = "Bezig…";
+    try{ await saveMail(mailUit()); }catch(e){}
+    const r = await sendMail("tplOrder", {
+      to_email: state.user?.email || "", to_name: "Test",
+      order_number: "#TEST", order_date: new Date().toLocaleDateString("nl-BE"),
+      order_lines: "1 × Testproduct — € 0,00", order_subtotal: "€ 0,00",
+      order_shipping: "€ 0,00", order_total: "€ 0,00", order_status: "Test",
+      address: "Lepelstraat 8\n9280 Lebbeke\nBE", site_url: SITE_URL, account_url: SITE_URL,
+      confirm_url: SITE_URL, delivery_from: "morgen", delivery_to: "overmorgen",
+    });
+    notify(r.ok ? `Testmail verstuurd naar ${state.user?.email}` : "Mislukt: " + r.reason);
+    test.disabled = false; test.textContent = "Testmail sturen";
+  };
   const save = document.getElementById('savePricingBtn');
   if (save) save.onclick = async () => {
     const out = { ...pricing() };
@@ -4150,6 +4616,7 @@ function attachPricingHandlers(){
       if (isFinite(v) && v > 0) slicer[el.dataset.key] = v;
     });
     out.slicer = slicer;
+    try{ await saveMail(mailUit()); }catch(e){ notify("E-mailinstellingen niet bewaard: " + e.message); }
     const tiers = (out.discountTiers || []).map(t => ({ ...t }));
     document.querySelectorAll('.tierfield').forEach(el=>{
       const i = parseInt(el.dataset.i,10);
@@ -4179,11 +4646,12 @@ window.__editProduct = (id) => {
   if (!p) return;
   state.__editing = id;
   state.__draftImages = productImages(p).slice();
+  state.__draftSlots = colorSlots(p).map(sl => ({ ...sl }));
   state.__adminTab = "products";
   render();
   window.scrollTo(0,0);
 };
-window.__cancelEdit = () => { state.__editing = null; state.__draftImages = []; render(); };
+window.__cancelEdit = () => { state.__editing = null; state.__draftImages = []; state.__draftSlots = null; render(); };
 window.__removeDraftImage = (i) => { state.__draftImages.splice(i,1); renderImageTray(); };
 
 function renderImageTray(){
@@ -4224,6 +4692,23 @@ function attachAdminHandlers(){
     document.getElementById('sizingFields').classList.toggle('hidden', !sizingBox.checked);
   };
   if (!Array.isArray(state.__draftImages)) state.__draftImages = [];
+  if (!Array.isArray(state.__draftSlots)) state.__draftSlots = colorSlots(state.__editing ? state.products.find(p => p.id === state.__editing) || {} : {});
+
+  const slotBtn = document.getElementById('addSlotBtn');
+  if (slotBtn) slotBtn.onclick = () => {
+    if (state.__draftSlots.length >= 10){ notify("Tien onderdelen is het maximum"); return; }
+    state.__draftSlots = [...state.__draftSlots, { name: "", filamentId: null }];
+    render();
+  };
+  document.querySelectorAll('.slotname').forEach(el=>{
+    el.oninput = () => { state.__draftSlots[+el.dataset.i].name = el.value; };   // geen render: cursor blijft staan
+  });
+  document.querySelectorAll('.slotfil').forEach(el=>{
+    el.onchange = () => { state.__draftSlots[+el.dataset.i].filamentId = el.value || null; };
+  });
+  document.querySelectorAll('.slotdel').forEach(el=>{
+    el.onclick = () => { state.__draftSlots.splice(+el.dataset.i, 1); render(); };
+  });
   renderImageTray();
 
   const fileInput = document.getElementById('pImgFile');
@@ -4264,6 +4749,12 @@ function attachAdminHandlers(){
       name, price,
       description: val('pDesc'),
       stock: parseInt(val('pStock'),10) || 0,
+      discountPct: Math.min(90, Math.max(0, parseInt(val('pDiscount'),10) || 0)),
+      discountUntil: val('pDiscountUntil') ? new Date(val('pDiscountUntil') + "T23:59:59").getTime() : null,
+      colorSlots: (state.__draftSlots || [])
+        .map(sl => ({ name: (sl.name || "").trim(), filamentId: sl.filamentId || null }))
+        .filter(sl => sl.name)
+        .slice(0, 10),
       category: val('pCategory'),
       color: val('pColor'),
       material: val('pMaterial'),
@@ -4291,6 +4782,7 @@ function attachAdminHandlers(){
         await addProduct(data);
       }
       state.__draftImages = [];
+      state.__draftSlots = null;
       render();
       window.scrollTo(0,0);
     }catch(err){
@@ -4311,6 +4803,7 @@ window.__lc = {
 
 /* --------------------------- boot --------------------------- */
 seedIfEmpty();
+listenMail();     // ook een klant moet post kunnen krijgen
 listenProducts();
 listenFilaments();
 listenPricing();
