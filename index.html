@@ -2063,8 +2063,17 @@ function mailOrderParams(o){
     account_url: SITE_URL,
   };
 }
+/* Elk bericht krijgt zijn eigen kop, inleiding en knop mee. Zo kun je met één
+   sjabloon toe voor alle drie de momenten — het gratis pakket van EmailJS geeft
+   er maar een paar. Wie wil, vult gewoon drie verschillende sjablonen in. */
 async function mailBestelling(o){
-  const r = await sendMail("tplOrder", mailOrderParams(o));
+  const r = await sendMail("tplOrder", {
+    ...mailOrderParams(o),
+    mail_title: "Bedankt voor je bestelling",
+    mail_intro: "We hebben je bestelling goed ontvangen en gaan ermee aan de slag. Hieronder staat wat je besteld hebt.",
+    action_url: SITE_URL,
+    action_label: "Bekijk je bestelling",
+  });
   if (!r.ok && r.reason !== "niet ingesteld") console.warn("bevestigingsmail niet verstuurd:", r.reason);
 }
 async function mailVerzonden(o){
@@ -2072,6 +2081,10 @@ async function mailVerzonden(o){
   const r = await sendMail("tplShipped", {
     ...mailOrderParams(o),
     delivery_from: fmtDate(w.from), delivery_to: fmtDate(w.to),
+    mail_title: "Je bestelling is onderweg",
+    mail_intro: `Je pakket is vertrokken. We verwachten het tussen ${fmtDate(w.from)} en ${fmtDate(w.to)} bij je.`,
+    action_url: SITE_URL,
+    action_label: "Volg je bestelling",
   });
   if (!r.ok && r.reason !== "niet ingesteld") notify("Verzendmail niet verstuurd: " + r.reason);
 }
@@ -2080,6 +2093,10 @@ async function mailGeleverd(o){
     ...mailOrderParams(o),
     // hier klikt de klant op om de ontvangst te bevestigen
     confirm_url: SITE_URL,
+    mail_title: "Is je pakket aangekomen?",
+    mail_intro: "Volgens ons is je bestelling geleverd. Klopt dat? Laat het ons even weten met de knop hieronder, dan weten wij dat het goed is aangekomen.",
+    action_url: SITE_URL,
+    action_label: "Ja, ontvangen",
   });
   if (!r.ok && r.reason !== "niet ingesteld") notify("Ontvangstmail niet verstuurd: " + r.reason);
 }
@@ -4632,12 +4649,15 @@ function mailAdminBlock(){
           </div>`).join("")}
       </div>
       <p class="muted" style="font-size:11px;margin:8px 0 0;max-width:65ch;">
-        In je sjablonen kun je deze velden gebruiken:
+        Het gratis pakket van EmailJS geeft maar een paar sjablonen. Dat hoeft niet te knellen:
+        elk bericht stuurt zijn eigen <span class="font-mono">mail_title</span>,
+        <span class="font-mono">mail_intro</span>, <span class="font-mono">action_url</span> en
+        <span class="font-mono">action_label</span> mee, dus je kunt driemaal dezelfde sjabloon-ID
+        invullen. Verder beschikbaar:
         <span class="font-mono">to_email, to_name, order_number, order_date, order_lines,
         order_subtotal, order_shipping, order_total, order_status, address, site_url</span>,
-        bij verzonden ook <span class="font-mono">delivery_from, delivery_to</span>,
-        en bij geleverd <span class="font-mono">confirm_url</span> — daar klikt de klant op
-        om op de website ontvangst te bevestigen.
+        bij verzonden ook <span class="font-mono">delivery_from, delivery_to</span>.
+        De stap-voor-stap uitleg staat in EMAIL.md.
       </p>
     </div>`;
 }
@@ -4715,6 +4735,8 @@ function attachPricingHandlers(){
       order_shipping: "€ 0,00", order_total: "€ 0,00", order_status: "Test",
       address: "Lepelstraat 8\n9280 Lebbeke\nBE", site_url: SITE_URL, account_url: SITE_URL,
       confirm_url: SITE_URL, delivery_from: "morgen", delivery_to: "overmorgen",
+      mail_title: "Testbericht", mail_intro: "Als je dit leest, staat je e-mail goed ingesteld.",
+      action_url: SITE_URL, action_label: "Naar de shop",
     });
     notify(r.ok ? `Testmail verstuurd naar ${state.user?.email}` : "Mislukt: " + r.reason);
     test.disabled = false; test.textContent = "Testmail sturen";

@@ -51,10 +51,16 @@ browser afronden — anders kan iemand zichzelf op "betaald" zetten.
 
 ## 6. E-mail
 
-De bevestiging van een e-mailadres loopt via Firebase en is gratis.
-De overige berichten lopen via EmailJS: gratis tot 200 berichten per maand.
-Zet in het EmailJS-dashboard de **domeinbeperking** aan, anders kan iemand
-anders met jouw sleutel berichten versturen.
+De bevestiging van een e-mailadres loopt via Firebase en werkt al — daar hoef
+je niets voor te doen.
+
+De bestelbevestiging en de berichten bij *verzonden* en *geleverd* lopen via
+EmailJS: gratis tot 200 berichten per maand.
+
+**➜ De stap-voor-stap uitleg staat in [EMAIL.md](EMAIL.md).**
+Een kwartier werk, met een kant-en-klaar sjabloon om te plakken.
+
+Vul je niets in, dan verstuurt de shop niets en werkt de rest gewoon door.
 
 ## Samengevat
 
