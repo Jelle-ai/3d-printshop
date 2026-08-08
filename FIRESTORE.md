@@ -52,6 +52,13 @@ Die datum is jouw vervaldatum. Dát is wat we vervangen.
 
 ## Stap 2 — De nieuwe regels erin zetten
 
+> **Doe dit ook opnieuw als de shop iets nieuws heeft gekregen.** De regels
+> noemen elke soort gegevens apart op. Komt er iets bij — 3D-voorbeelden bij
+> een product, kortingscodes — dan staat dat nog niet in jouw regels en weigert
+> Firestore het. Merk je dat aan een melding die begint met *"Firestore weigert
+> dit"*, plak de regels dan gewoon opnieuw. Het kan geen kwaad om dat te doen
+> als het niet nodig is.
+
 1. Open in dit project het bestand **`firestore.rules`**.
    Op GitHub: <https://github.com/Jelle-ai/3d-printshop/blob/main/firestore.rules>
    → klik rechtsboven op het kopieerknopje (*Copy raw file*).
@@ -79,6 +86,8 @@ Loop deze vier dingen af. Elk duurt een halve minuut.
 | Open je site **zonder in te loggen** | De collectie is gewoon zichtbaar |
 | Log in als `jelle@mattan.be` → Shopbeheer | Producten, bestellingen, prijzen: alles opent |
 | Verander iets kleins aan een product en sla op | "Product bijgewerkt" |
+| Zet bij een product een 3D-model en sla op | Op de productpagina kun je het draaien |
+| Maak een kortingscode aan bij Prijzen → Kortingscodes | Hij verschijnt in de lijst |
 | Log in met een ander account en bestel iets | De bestelling komt aan en staat bij *Mijn bestellingen* |
 
 Gaat er iets mis, kijk dan bij **Wat als er iets niet werkt** hieronder. Je kunt
