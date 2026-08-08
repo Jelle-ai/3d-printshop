@@ -617,7 +617,6 @@ let state = {
   productsLoaded: false,
   productsError: null,
   productsStalled: false,
-  seedError: null,
   ordersError: null,
   filaments: [],
   orders: [],
@@ -1900,116 +1899,7 @@ function readableOn(hex){
   return (0.299*r + 0.587*g + 0.114*b) > 150 ? "#15171b" : "#F2F1ED";
 }
 
-/* Bouwt een productafbeelding als SVG: een gestapeld "geprint" object.
-   profile(t) geeft de halve breedte terug, t=0 onderaan tot t=1 bovenaan. */
-function printSvg(profile, colorA, colorB, bg){
-  const rows = 26, top = 72, bottom = 332, h = (bottom - top) / rows;
-  let out = "";
-  for (let i = 0; i < rows; i++){
-    const t = i / (rows - 1);
-    const w = Math.max(7, profile(t) * 150);
-    const y = bottom - (i + 1) * h;
-    out += `<rect x="${(200-w).toFixed(1)}" y="${y.toFixed(1)}" width="${(w*2).toFixed(1)}" height="${(h-2.2).toFixed(1)}" rx="3" fill="${i%2 ? colorB : colorA}" opacity="${(0.58 + 0.42*t).toFixed(2)}"/>`;
-  }
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><rect width="400" height="400" fill="${bg}"/><ellipse cx="200" cy="338" rx="105" ry="12" fill="#000" opacity="0.28"/>${out}</svg>`;
-  return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
-}
-const PROFILE = {
-  vase:  t => 0.34 + 0.30 * Math.sin(Math.PI * t),
-  tag:   t => t > 0.80 ? 0.10 : 0.62,
-  wedge: t => 0.70 - 0.46 * t,
-  box:   t => 0.55,
-  bowl:  t => 0.26 + 0.40 * Math.sqrt(t),
-};
-const SHAPE_LABELS = { vase:"Vaas", tag:"Plaatje", wedge:"Wig", box:"Blok", bowl:"Kom" };
 
-/* Kleurvoorbeeld: hetzelfde object, geprint in het gekozen filament.
-   De afwerking bepaalt hoe het licht valt — mat vlak, zijdeglans met een
-   duidelijke glans, standaard iets ertussenin. */
-function filamentPreview(shape, hex, finish){
-  const profile = PROFILE[shape] || PROFILE.box;
-  const light = shade(hex, finish === "matte" ? 0.10 : finish === "silk" ? 0.34 : 0.18);
-  const dark  = shade(hex, finish === "matte" ? -0.12 : finish === "silk" ? -0.30 : -0.18);
-  const rows = 26, top = 72, bottom = 332, h = (bottom - top) / rows;
-  let bars = "";
-  for (let i = 0; i < rows; i++){
-    const t = i / (rows - 1);
-    const w = Math.max(7, profile(t) * 150);
-    const y = bottom - (i + 1) * h;
-    bars += `<rect x="${(200-w).toFixed(1)}" y="${y.toFixed(1)}" width="${(w*2).toFixed(1)}" height="${(h-2.2).toFixed(1)}" rx="3" fill="${i%2 ? dark : light}"/>`;
-  }
-  // Zijdeglans krijgt een verticale glansband, mat krijgt niets.
-  const sheen = finish === "silk"
-    ? `<defs><linearGradient id="s" x1="0" y1="0" x2="1" y2="0">
-         <stop offset="0" stop-color="#fff" stop-opacity="0"/>
-         <stop offset="0.34" stop-color="#fff" stop-opacity="0.42"/>
-         <stop offset="0.52" stop-color="#fff" stop-opacity="0.06"/>
-         <stop offset="1" stop-color="#fff" stop-opacity="0"/>
-       </linearGradient></defs>
-       <rect x="60" y="60" width="280" height="285" fill="url(#s)" style="mix-blend-mode:soft-light"/>`
-    : finish === "basic"
-    ? `<defs><linearGradient id="s" x1="0" y1="0" x2="1" y2="0">
-         <stop offset="0" stop-color="#fff" stop-opacity="0"/>
-         <stop offset="0.3" stop-color="#fff" stop-opacity="0.14"/>
-         <stop offset="1" stop-color="#fff" stop-opacity="0"/>
-       </linearGradient></defs>
-       <rect x="60" y="60" width="280" height="285" fill="url(#s)" style="mix-blend-mode:soft-light"/>`
-    : ``;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">`
-    + `<rect width="400" height="400" fill="#22262c"/>`
-    + `<ellipse cx="200" cy="338" rx="105" ry="12" fill="#000" opacity="0.28"/>`
-    + bars + sheen + `</svg>`;
-  return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
-}
-
-async function seedIfEmpty(){
-  try{
-    const snap = await getDoc(doc(db, "meta", "seeded_v2"));
-    if (snap.exists()) return;
-    await writeSeed();
-  }catch(err){
-    // Stil falen zou een lege collectie opleveren zonder uitleg; de shop toont de reden.
-    state.seedError = err;
-    if (state.view === "shop") render();
-  }
-}
-async function writeSeed(){
-  const seed = [
-    {
-      name:"Plantenvaas — Spiraal", price:18.0, stock:15, category:"Wonen",
-      description:"Waterdichte vaas geprint in vase mode: één doorlopende wand van onder tot boven, zonder naden. De spiraal vangt het licht anders vanuit elke hoek. Geschikt voor droogbloemen of, met een glazen buisje erin, voor water.",
-      material:"PETG", infill:"vase mode", layerHeight:"0.16mm", color:"Petrol",
-      dimensions:"Ø 90 × 180 mm", printTime:"5u 40m", weight:145, featured:true, icon:"cube", shape:"vase",
-      images:[ printSvg(PROFILE.vase,"#2EC4B6","#25a99d","#22262c"), printSvg(PROFILE.vase,"#3ad4c5","#2EC4B6","#1a1d22") ],
-    },
-    {
-      name:"Sleutelhanger — Hex Tag", price:6.5, stock:40, category:"Accessoires",
-      description:"Compacte tag met zeshoekig patroon en versterkt ophangoog. Print snel, gaat lang mee, en kan op aanvraag met je eigen initialen in reliëf.",
-      material:"PLA", infill:"20%", layerHeight:"0.2mm", color:"Oranje",
-      dimensions:"45 × 28 × 4 mm", printTime:"38m", weight:6, featured:false, icon:"cube", shape:"tag",
-      images:[ printSvg(PROFILE.tag,"#FF6B35","#e05528","#22262c"), printSvg(PROFILE.tag,"#ff8659","#FF6B35","#1a1d22") ],
-    },
-    {
-      name:"Telefoonstandaard — Wedge", price:9.9, stock:25, category:"Bureau",
-      description:"Stevige wig met een uitsparing voor de laadkabel, zodat je toestel opgeladen blijft staan. Past op vrijwel elke telefoon, met of zonder hoesje.",
-      material:"PLA+", infill:"35%", layerHeight:"0.2mm", color:"Grijs",
-      dimensions:"80 × 70 × 62 mm", printTime:"2u 15m", weight:48, featured:false, icon:"cube", shape:"wedge",
-      images:[ printSvg(PROFILE.wedge,"#c9cdd4","#a8adb6","#22262c"), printSvg(PROFILE.wedge,"#dfe3e9","#c9cdd4","#1a1d22") ],
-    },
-    {
-      name:"Opbergdoosje — Op maat", price:0, stock:999, category:"Bureau",
-      description:"Een doosje in precies de maat die jij nodig hebt. Geef lengte, breedte en hoogte op en de prijs volgt meteen — die hangt af van hoeveel filament erin gaat en hoe lang het printen duurt. Met een deksel dat op wrijving sluit.",
-      material:"PLA Basic", infill:"20%", layerHeight:"0.20mm", color:"Naar keuze",
-      printTime:"varieert", weight:0, featured:true, icon:"cube", shape:"box",
-      sizing:{ enabled:true, def:[80,60,40], min:[30,30,15], max:[220,220,180], solidity:22, infill:20, layerHeight:"0.20mm" },
-      images:[ printSvg(PROFILE.box,"#8E9089","#6f747d","#22262c") ],
-    },
-  ];
-  for (const p of seed) await addDoc(collection(db,"products"), { ...p, createdAt: Date.now() });
-  await setDoc(doc(db,"meta","seeded_v2"), { done:true });
-}
-
-/* --------------------------- orders (realtime) --------------------------- */
 let unsubOrders = null;
 function listenOrders(){
   if (unsubOrders) unsubOrders();
@@ -2446,7 +2336,7 @@ function emptyCollectionNotice(){
   if (!state.productsLoaded && !state.productsError){
     return `<p class="muted" style="font-size:13px;">Collectie laden…</p>`;
   }
-  const err = state.productsError || state.seedError;
+  const err = state.productsError;
   if (err){
     return `
       <div class="cart-item" style="border-color:var(--accent);">
@@ -2458,27 +2348,17 @@ function emptyCollectionNotice(){
   return `
     <div class="cart-item">
       <p style="font-size:13px;margin:0 0 8px;">Er staan nog geen producten in de collectie.</p>
-      <p class="muted" style="font-size:13px;margin:0 0 12px;">De drie voorbeeldproducten worden normaal automatisch toegevoegd. Zijn ze verwijderd, of ging dat de eerste keer mis, dan kun je ze hier opnieuw plaatsen.</p>
-      <button class="btn btn-accent" id="reseedBtn">Voorbeeldproducten toevoegen</button>
+      <p class="muted" style="font-size:13px;margin:0 0 12px;">
+        ${state.profile?.isAdmin
+          ? "Voeg je eerste product toe in Shopbeheer."
+          : "Je kunt intussen wel je eigen model laten printen."}
+      </p>
+      <button class="btn btn-accent" onclick="go('${state.profile?.isAdmin ? "admin" : "custom"}')">
+        ${state.profile?.isAdmin ? "Naar Shopbeheer" : "Upload je model"}
+      </button>
     </div>`;
 }
-window.__reseed = async (btn) => {
-  btn.disabled = true;
-  btn.textContent = "Bezig…";
-  try{
-    await writeSeed();
-    state.seedError = null;
-    notify("Voorbeeldproducten toegevoegd");
-  }catch(err){
-    state.seedError = err;
-    notify("Mislukt: " + firestoreHint(err));
-    render();
-  }
-};
-
 function attachShopHandlers(){
-  const reseed = document.getElementById('reseedBtn');
-  if (reseed) reseed.onclick = () => window.__reseed(reseed);
   document.querySelectorAll('[data-open]').forEach(btn=>{
     btn.onclick = () => {
       state.selectedProduct = state.products.find(p=>p.id===btn.dataset.open);
@@ -2778,19 +2658,15 @@ function viewProduct(){
     ? `<div style="padding:32px 0;"><p class="muted">Dit product bestaat niet meer.</p>
        <button class="btn btn-accent" onclick="go('shop')">Naar de collectie</button></div>`
     : `<div style="padding:32px 0;"><p class="muted"><i class="fa-solid fa-spinner" aria-hidden="true"></i> Even je product ophalen…</p></div>`;
-  const imgs = productImages(p);
+  const all = productImages(p);
   const chosen = currentFilament(p);
-  // index 0 is het kleurvoorbeeld, daarna komen de foto's van het product
-  const preview = chosen ? filamentPreview(p.shape || "box", chosen.hex, chosen.finish) : null;
-  const all = preview ? [preview, ...imgs] : imgs;
   const active = Math.min(state.__gallery || 0, Math.max(0, all.length - 1));
-  const showingPreview = preview && active === 0;
   const main = all.length
     ? `<img id="galleryMain" src="${esc(all[active])}" alt="${esc(p.name)}" />`
     : `<span><i class="fa-solid fa-cube" aria-hidden="true"></i></span>`;
   const strip = all.length > 1 ? `
     <div class="strip">
-      ${all.map((src,i)=>`<button class="${i===active?'active':''}" data-img="${i}"><img src="${esc(src)}" alt="${i===0&&preview?'Kleurvoorbeeld':'Afbeelding '+i}" /></button>`).join("")}
+      ${all.map((src,i)=>`<button class="${i===active?'active':''}" data-img="${i}"><img src="${esc(src)}" alt="Afbeelding ${i+1}" /></button>`).join("")}
     </div>` : ``;
 
   const specs = [
@@ -2817,7 +2693,7 @@ function viewProduct(){
         <div>
           <div class="viewer rel">
             ${main}
-            ${showingPreview ? `<span class="viewer-tag">KLEURVOORBEELD · ${esc(chosen.name.toUpperCase())}</span>` : ``}
+            ${chosen ? `<span class="viewer-tag">${esc(chosen.name.toUpperCase())}</span>` : ``}
           </div>
           ${strip}
         </div>
@@ -3768,11 +3644,6 @@ function colorChoiceLine(it){
 
 /* De vorm van het bijbehorende product, zodat het kleurvoorbeeld in de
    winkelwagen hetzelfde object toont als op de productpagina. */
-function cartShape(it){
-  const p = state.products.find(x => x.id === (it.productId || it.id));
-  return p?.shape || "box";
-}
-
 function viewCart(){
   if (state.cart.length===0){
     return `<div style="padding:32px 0;"><button class="back" onclick="go('shop')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Verder winkelen</button><h1 class="font-display" style="font-size:22px;">Winkelwagen</h1><p class="muted">Je winkelwagen is leeg.</p></div>`;
@@ -3783,9 +3654,7 @@ function viewCart(){
         <div class="admin-thumb">${
           it.kind==='custom'
             ? `<i class="fa-solid fa-file-lines" aria-hidden="true"></i>`
-            : it.filament
-              ? `<img src="${esc(filamentPreview(cartShape(it), it.filament.hex, it.filament.finish))}" alt="" />`
-              : productThumb(state.products.find(x=>x.id===(it.productId||it.id)) || {}, 18)
+            : productThumb(state.products.find(x=>x.id===(it.productId||it.id)) || {}, 18)
         }</div>
         <div style="min-width:0;">
           <div style="font-size:13px;">${esc(it.name)}</div>
@@ -4047,7 +3916,6 @@ function orderCard(o){
     <div class="order-line">
       <div class="admin-thumb">${
         i.kind === 'custom' ? `<i class="fa-solid fa-file-lines" aria-hidden="true"></i>`
-        : i.filament ? `<img src="${esc(filamentPreview(cartShape(i), i.filament.hex, i.filament.finish))}" alt="" />`
         : productThumb(state.products.find(p=>p.id===(i.productId||i.id)) || {}, 18) }</div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:13px;">${esc(i.name)}</div>
@@ -4501,11 +4369,6 @@ function viewAdmin(){
               </select>
               <p class="muted" style="font-size:11px;margin:0;">Massiefheid is hoeveel van de omhullende doos daadwerkelijk materiaal is. Een hol doosje zit rond 20%, een massief figuurtje op 100%.</p>
             </div>
-
-            <label class="field-label">Vorm voor het kleurvoorbeeld</label>
-            <select class="field" id="pShape">
-              ${Object.entries(SHAPE_LABELS).map(([k,v])=>`<option value="${k}" ${k===(ed?.shape||'box')?'selected':''}>${v}</option>`).join("")}
-            </select>
 
             <label class="field-label">Beschikbare filamenttypes</label>
             <p class="muted" style="font-size:11px;margin:-2px 0 8px;">Niets aanvinken = alle ingeschakelde filamenten.</p>
@@ -5026,7 +4889,6 @@ function attachAdminHandlers(){
       dimensions: val('pDim'),
       printTime: val('pTime'),
       weight: isFinite(weight) ? weight : 0,
-      shape: val('pShape') || "box",
       sizing: sizingFromForm(),
       filamentTypes: [...document.querySelectorAll('.ptype:checked')].map(c => c.value),
       featured: !!document.getElementById('pFeatured')?.checked,
@@ -5065,7 +4927,6 @@ window.__lc = {
 };
 
 /* --------------------------- boot --------------------------- */
-seedIfEmpty();
 listenMail();     // ook een klant moet post kunnen krijgen
 listenProducts();
 listenFilaments();
