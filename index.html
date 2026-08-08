@@ -57,6 +57,8 @@
   .font-mono{font-family:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;}
   a{color:inherit;text-decoration:none;}
   button, select, input, textarea{font-family:inherit;font-size:14px;color:inherit;}
+  /* dubbeltikken op een knop zoomt anders in op een telefoon */
+  button, a, label, select, .card, summary{touch-action:manipulation;}
   button{cursor:pointer;}
   :focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
   .muted{color:var(--muted);}
@@ -197,6 +199,13 @@
     border-radius:9px;padding:10px 12px;margin-bottom:10px;transition:border-color .12s;
   }
   input:focus, textarea:focus, select.field:focus{outline:none;border-color:var(--accent);}
+  /* Op een telefoon zoomt de browser vanzelf in zodra je een invoerveld
+     aantikt dat kleiner is dan 16px — en hij zoomt daarna niet terug uit.
+     Daarom zijn de velden daar een maat groter. */
+  @media (pointer: coarse){
+    input, textarea, select, button, select.field{font-size:16px;}
+    .btn-sm{font-size:14px;}
+  }
   label.field-label{
     font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
     color:var(--muted);display:block;margin-bottom:5px;
@@ -247,7 +256,7 @@
     position:absolute;right:8px;bottom:8px;color:var(--paper);opacity:.55;
     font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
   }
-  .viewer-toggle{
+    .viewer-toggle{
     position:absolute;right:8px;top:8px;padding:5px 10px;font-size:11px;
     background:rgba(20,20,20,.72);color:var(--paper);border-color:rgba(255,255,255,.22);
     backdrop-filter:blur(3px);
@@ -3540,7 +3549,22 @@ function orderTracker(o){
     </div>`).join("")}</div>`;
 }
 function etaLine(o){
-  if (o.status === "Geleverd") return `<div class="eta"><i class="fa-solid fa-box-open" aria-hidden="true"></i> <strong>Geleverd.</strong> Bedankt voor je bestelling!</div>`;
+  if (o.status === "Geleverd"){
+    // Heeft de klant het zelf bevestigd, dan is het rond. Zette de shop hem op
+    // geleverd, dan mag de klant het nog altijd zelf bevestigen.
+    if (o.receivedAt) return `
+      <div class="eta"><i class="fa-solid fa-box-open" aria-hidden="true"></i>
+        <strong>Ontvangen.</strong> Bevestigd op ${esc(new Date(o.receivedAt).toLocaleDateString('nl-BE', { day:'numeric', month:'long', year:'numeric' }))}.
+      </div>`;
+    return `
+      <div class="eta" style="display:block;">
+        <p style="margin:0 0 4px;">${ic("box-open")} <strong>Geleverd.</strong></p>
+        <p class="muted" style="font-size:12px;margin:0 0 10px;">Is je pakket aangekomen? Laat het ons weten, dan weten wij dat het goed is aangekomen.</p>
+        <button class="btn btn-accent btn-sm" onclick="window.__confirmReceived('${o.id}')">
+          ${ic("circle-check")} Ontvangen
+        </button>
+      </div>`;
+  }
   const w = deliveryWindow(o);
   if (o.status === "Verzonden"){
     return `
@@ -3597,7 +3621,7 @@ function orderCard(o){
     <div class="order-card" style="margin-bottom:12px;">
       <div class="between" style="margin-bottom:2px;">
         <span class="font-mono" style="font-size:12px;">${esc(orderNumber(o))}</span>
-        <span class="badge">${esc(o.status)}</span>
+        <span class="badge${o.receivedAt ? " badge-accent" : ""}">${o.receivedAt ? "Ontvangen" : esc(o.status)}</span>
       </div>
       <div class="muted font-mono" style="font-size:11px;">Besteld op ${esc(new Date(o.createdAt).toLocaleDateString('nl-BE', { day:'numeric', month:'long', year:'numeric' }))}</div>
       ${orderTracker(o)}
@@ -3646,7 +3670,10 @@ function viewAccount(){
       ${actief.map(orderCard).join("") || `<p class="muted" style="font-size:13px;">Je hebt momenteel geen lopende bestellingen.</p>`}
 
       ${afgerond.length ? `
-        <h2 class="font-display" style="font-size:16px;margin:24px 0 10px;">Afgeleverd</h2>
+        <h2 class="font-display" style="font-size:16px;margin:24px 0 4px;">Geschiedenis</h2>
+        <p class="muted" style="font-size:12px;margin:0 0 10px;">
+          Afgeronde bestellingen. Ze blijven hier staan, maar tellen niet meer mee bij wat er nog moet komen.
+        </p>
         ${afgerond.map(orderCard).join("")}` : ``}
 
       <div class="row" style="margin-top:20px;">
@@ -3673,8 +3700,8 @@ function viewAdmin(){
         <button class="btn btn-ghost btn-sm" onclick="window.__deleteProduct('${p.id}')" title="Verwijderen"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
       </div>
     </div>`).join("");
-  const orderRows = state.orders.map(o=>`
-    <div class="admin-row" style="margin-bottom:10px;">
+  const orderRow = (o)=>`
+    <div class="admin-row" style="margin-bottom:10px;${o.receivedAt ? 'border-left:3px solid var(--accent);' : ''}">
       <div class="order-head">
         <div class="order-meta">
           <div style="font-size:13px;font-weight:600;word-break:break-word;">${esc(o.userEmail)}</div>
@@ -3687,8 +3714,8 @@ function viewAdmin(){
           ${ORDER_STEPS.map(s=>`<option ${s===o.status?'selected':''}>${s}</option>`).join("")}
         </select>
       </div>
-      ${o.receivedAt ? `<p class="muted font-mono" style="font-size:10px;margin:-4px 0 8px;">
-        Ontvangst bevestigd door de klant op ${esc(new Date(o.receivedAt).toLocaleDateString('nl-BE'))}
+      ${o.receivedAt ? `<p style="font-size:11px;margin:-2px 0 8px;color:var(--accent);font-weight:600;">
+        ${ic("circle-check")} Klant bevestigde de ontvangst op ${esc(new Date(o.receivedAt).toLocaleString('nl-BE'))}
       </p>` : ``}
       ${o.items.map(i=>`
         <div class="row" style="gap:7px;font-size:13px;margin-bottom:3px;">
@@ -3713,7 +3740,19 @@ function viewAdmin(){
         <span class="price" style="font-size:14px;">${fmtEUR(o.total)}</span>
       </div>
       ${o.paymentMethod ? `<div class="muted font-mono" style="font-size:10px;margin-top:6px;word-break:break-word;">${esc(o.paymentMethod)}${o.paymentRef ? " · " + esc(o.paymentRef) : ""}${o.demoPayment ? " · TESTGELD" : ""}</div>` : ``}
-    </div>`).join("");
+    </div>`;
+
+  // Wat nog werk vraagt bovenaan; afgeronde bestellingen zakken naar onder.
+  const lopend = state.orders.filter(o => o.status !== "Geleverd");
+  const klaar  = state.orders.filter(o => o.status === "Geleverd");
+  const orderRows = `
+    ${lopend.map(orderRow).join("")}
+    ${klaar.length ? `
+      <h3 class="font-display" style="font-size:14px;margin:22px 0 4px;">Afgehandeld (${klaar.length})</h3>
+      <p class="muted" style="font-size:11px;margin:0 0 10px;">
+        ${klaar.filter(o => o.receivedAt).length} daarvan zijn door de klant zelf bevestigd.
+      </p>
+      ${klaar.map(orderRow).join("")}` : ``}`;
   return `
     <div style="padding:32px 0;">
       <h1 class="font-display" style="font-size:26px;">Shopbeheer</h1>
@@ -3844,7 +3883,7 @@ function viewAdmin(){
         </div>
       </div>
       <div id="adminOrders" class="${tab==='orders'?'':'hidden'}">
-        ${orderRows || `<p class="muted" style="font-size:13px;">Nog geen bestellingen.</p>`}
+        ${state.orders.length ? orderRows : `<p class="muted" style="font-size:13px;">Nog geen bestellingen.</p>`}
       </div>
     </div>`;
 }
