@@ -1,7 +1,7 @@
 rules_version = '2';
 
 // =====================================================================
-// Beveiligingsregels voor LayerCraft
+// Beveiligingsregels voor Extrudo
 //
 // Deze regels vervangen de testmodus. Testmodus laat iedereen alles lezen
 // én schrijven en vervalt na dertig dagen — daarna doet de site niets meer.
