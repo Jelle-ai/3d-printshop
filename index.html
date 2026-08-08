@@ -600,7 +600,7 @@ function notify(msg){
 /* --------------------------- state --------------------------- */
 /* Waar iemand was toen hij herlaadde. Inloggen en betalen slaan we over: daar
    halverwege terugkomen helpt niemand. */
-const HERSTELBARE_VIEWS = ["shop","product","custom","cart","account","admin"];
+const HERSTELBARE_VIEWS = ["shop","product","custom","cart","account","admin","archief"];
 function bewaardeView(){
   try{
     const v = JSON.parse(sessionStorage.getItem('lc_view') || "null");
@@ -951,10 +951,23 @@ const DEFAULT_SLICER = {
   speedInner: 300,          // mm/s binnenwanden
   speedSolid: 250,          // mm/s massieve vlakken
   speedSparse: 270,         // mm/s vulling
+  speedTop: 200,            // mm/s bovenvlak: rustiger voor een gladde top
+  speedFirst: 50,           // mm/s eerste laag: die moet goed hechten
   accelOuter: 5000,         // mm/s² buitenwand: rustiger voor de afwerking
   accelPrint: 10000,        // mm/s² de rest van het printwerk
+  accelFirst: 500,          // mm/s² eerste laag
   travelFactor: 1.08,       // toeslag voor verplaatsen zonder te printen
   layerSec: 1.2,            // vaste tijd per laag
+  // Voor het printen begint: opwarmen, bed uitmeten en de nozzle schoonspuiten.
+  // Bambu Studio noemt dit "prepare time" en het loopt aardig op.
+  prepSec: 480,
+  // Een laag mag niet sneller dan dit, anders krijgt het plastic geen tijd om
+  // af te koelen. Bij kleine modellen bepaalt dit de printtijd.
+  minLayerSec: 8,
+  // Wat er na alles nog naast zit: seams, terugtrekken, hoeken afsnijden, en
+  // alles wat een echte slicer wél in zijn banen ziet en wij niet. Afgesteld op
+  // een vergelijking met Bambu Studio; met de kalibratieknop stel je hem bij.
+  timeFactor: 1.8,
 };
 function slicerSettings(){ return { ...DEFAULT_SLICER, ...(pricing().slicer || {}) }; }
 const MAX_PARTS = 12;       // zoals bij PCBWay: twaalf onderdelen per opdracht
@@ -1069,10 +1082,45 @@ function sliceMesh(mesh, { layerHeight, infill, scale = 1 }){
 
   // Van doorsnede en omtrek naar materiaal en tijd.
   const dichtheid = Math.min(100, Math.max(0, infill)) / 100;
-  let wandVol = 0, lenBuiten = 0, lenBinnen = 0, binnenOpp = 0, massiefOpp = 0;
+
+  // Waar het model begint of ophoudt komt een massief vlak. Dat vlak ligt niet
+  // in één laag maar over een paar lagen: een dak is `topShells` dik, een
+  // bodem `bottomShells`. Daarom smeren we het over die lagen uit.
+  const massiefIn = new Float64Array(lagen);
+  for (let L = 0; L < lagen; L++){
+    const A = areas[L];
+    if (!(A > 0)) continue;
+    const boven = Math.max(0, A - (L + 1 < lagen ? areas[L+1] : 0));
+    const onder = Math.max(0, A - (L > 0 ? areas[L-1] : 0));
+    if (boven > 0) for (let k = 0; k < s.topShells; k++){
+      const i = L - k; if (i >= 0) massiefIn[i] += boven;
+    }
+    if (onder > 0) for (let k = 0; k < s.bottomShells; k++){
+      const i = L + k; if (i < lagen) massiefIn[i] += onder;
+    }
+  }
+
+  // Snelheid wordt begrensd door wat er door de nozzle past.
+  const doorstroom = s.maxFlow / (w * h);
+  function baanTijd(lengte, doel, accel){
+    if (!(lengte > 0)) return 0;
+    const v = Math.max(5, Math.min(doel, doorstroom));
+    const opgang = (v * v) / (2 * accel);        // afstand om op snelheid te komen
+    if (2 * opgang <= lengte) return 2 * (v / accel) + (lengte - 2 * opgang) / v;
+    return 2 * Math.sqrt(lengte / accel);        // te kort: alleen op- en afgaan
+  }
+  /* Tijd voor een hoeveelheid baanlengte die in stukken van `stuk` gereden
+     wordt. Elk stuk moet opnieuw op snelheid komen. */
+  function tijdVoor(totaal, stuk, doel, accel){
+    if (!(totaal > 0) || !(stuk > 0)) return 0;
+    return (totaal / stuk) * baanTijd(stuk, doel, accel);
+  }
+
+  let volume = 0, seconden = 0;
   for (let L = 0; L < lagen; L++){
     const A = areas[L], P = peris[L];
     if (!(A > 0)) continue;
+
     let wOpp = 0, wLenBuiten = 0, wLenBinnen = 0;
     for (let k = 0; k < s.walls; k++){
       // elke wand naar binnen is een stukje korter
@@ -1081,53 +1129,37 @@ function sliceMesh(mesh, { layerHeight, infill, scale = 1 }){
       if (k === 0) wLenBuiten += Pk; else wLenBinnen += Pk;
     }
     if (wOpp > A){ const f = A / wOpp; wOpp = A; wLenBuiten *= f; wLenBinnen *= f; }
-    wandVol += wOpp * h;
-    lenBuiten += wLenBuiten;
-    lenBinnen += wLenBinnen;
 
     const binnen = Math.max(0, A - wOpp);
-    binnenOpp += binnen;
-    // waar het model begint of ophoudt komt een massief vlak
-    const boven = Math.max(0, A - (L + 1 < lagen ? areas[L+1] : 0));
-    const onder = Math.max(0, A - (L > 0 ? areas[L-1] : 0));
-    massiefOpp += boven * s.topShells + onder * s.bottomShells;
-  }
-  massiefOpp = Math.min(massiefOpp, binnenOpp);
-  const vulOpp = Math.max(0, binnenOpp - massiefOpp) * dichtheid;
-  const volume = wandVol + (massiefOpp + vulOpp) * h;
+    const massief = Math.min(binnen, massiefIn[L]);
+    const vul = Math.max(0, binnen - massief) * dichtheid;
+    volume += (wOpp + massief + vul) * h;
 
-  // Tijd zoals de open-source slicers hem schatten: per beweging optrekken,
-  // eventueel even doorrijden, en weer afremmen. Een korte baan haalt zijn
-  // topsnelheid nooit — daarom kost een klein model verhoudingsgewijs meer
-  // tijd dan een groot.
-  const doorstroom = s.maxFlow / (w * h);       // wat er door de nozzle past
-  function baanTijd(lengte, doel, accel){
-    if (!(lengte > 0)) return 0;
-    const v = Math.max(5, Math.min(doel, doorstroom));
-    const opgang = (v * v) / (2 * accel);        // afstand om op snelheid te komen
-    if (2 * opgang <= lengte) return 2 * (v / accel) + (lengte - 2 * opgang) / v;
-    return 2 * Math.sqrt(lengte / accel);        // te kort: alleen op- en afgaan
-  }
-  /* Totale tijd voor een hoeveelheid baanlengte die in stukken van `stuk`
-     gereden wordt. */
-  function tijdVoor(totaal, stuk, doel, accel){
-    if (!(totaal > 0) || !(stuk > 0)) return 0;
-    return (totaal / stuk) * baanTijd(stuk, doel, accel);
-  }
+    // Hoe lang is één ononderbroken baan? Vulling loopt in rechte lijnen door
+    // het vlak, dus ongeveer de wortel van de oppervlakte. Een wand loopt rond
+    // de contour; die nemen we in vier stukken, voor de hoeken onderweg.
+    const stukVul = Math.max(1, Math.sqrt(A));
+    const stukWand = Math.max(1, wLenBuiten / 4);
 
-  // Hoe lang is één ononderbroken baan? Vulling loopt in rechte lijnen door het
-  // vlak, dus ongeveer de wortel van de oppervlakte. Een wand loopt rond de
-  // contour; die nemen we in vier stukken, voor de hoeken onderweg.
-  const gemOpp = binnenOpp / lagen, gemOmtrek = (lenBuiten / Math.max(1, lagen));
-  const stukVul = Math.max(1, Math.sqrt(Math.max(1, gemOpp)));
-  const stukWand = Math.max(1, gemOmtrek / 4);
+    // De eerste laag gaat traag en met weinig versnelling: die moet hechten.
+    // Een daklaag gaat ook rustiger, voor een gladde bovenkant.
+    const eerste = L === 0;
+    const vBuiten = eerste ? s.speedFirst : s.speedOuter;
+    const vBinnen = eerste ? s.speedFirst : s.speedInner;
+    const vMassief = eerste ? s.speedFirst : (massiefIn[L] > 0 && L + 1 < lagen && areas[L+1] < A ? s.speedTop : s.speedSolid);
+    const vVul = eerste ? s.speedFirst : s.speedSparse;
+    const aBuiten = eerste ? s.accelFirst : s.accelOuter;
+    const aRest = eerste ? s.accelFirst : s.accelPrint;
 
-  const seconden = (
-    tijdVoor(lenBuiten, stukWand, s.speedOuter, s.accelOuter) +
-    tijdVoor(lenBinnen, stukWand, s.speedInner, s.accelPrint) +
-    tijdVoor(massiefOpp / w, stukVul, s.speedSolid, s.accelPrint) +
-    tijdVoor(vulOpp / w, stukVul, s.speedSparse, s.accelPrint)
-  ) * s.travelFactor + lagen * s.layerSec;
+    let t = tijdVoor(wLenBuiten, stukWand, vBuiten, aBuiten)
+          + tijdVoor(wLenBinnen, stukWand, vBinnen, aRest)
+          + tijdVoor(massief / w, stukVul, vMassief, aRest)
+          + tijdVoor(vul / w, stukVul, vVul, aRest);
+    t = t * s.travelFactor + s.layerSec;
+    // Een laag mag niet sneller dan de koeling toelaat.
+    seconden += Math.max(t, s.minLayerSec);
+  }
+  seconden = seconden * (s.timeFactor || 1) + s.prepSec;
 
   return {
     volume, seconds: seconden, layers: lagen, height: hoogte,
@@ -1221,7 +1253,7 @@ function fitsPlate(sizeMm){
    Van beide houden we de driehoeken bij, zodat we het model massief kunnen
    tonen, kunnen opmeten en kunnen opsplitsen in losse delen.
    ===================================================================== */
-const PREVIEW_TRIANGLES = 16000;   // steekproef voor de weergave
+const PREVIEW_TRIANGLES = 40000;   // lichte versie, alleen tijdens het slepen
 const FULL_MESH_LIMIT   = 400000;  // daarboven bewaren we alleen de steekproef
 
 /* Rekent volume, oppervlakte en afmetingen uit een reeks driehoeken. */
@@ -1779,12 +1811,15 @@ function drawSlices(canvas, geo, slice, opts){
 }
 
 function drawMesh(canvas, geo, opts){
-  const { hex = "#B8BCC2", finish = "basic" } = opts || {};
+  const { hex = "#B8BCC2", finish = "basic", ruw = false } = opts || {};
   const c = meshCanvas(canvas, geo, opts);
   if (!c) return;
   const { g, project, cy, sy } = c;
 
-  const m = geo.mesh;
+  // Een steekproef van driehoeken laat gaten vallen — dan lijkt het model een
+  // kluwen draden in plaats van een massief voorwerp. Daarom tekenen we het
+  // hele model, en pakken we alleen tijdens het slepen de lichte versie.
+  const m = (ruw || !geo.full) ? geo.mesh : geo.full;
   if (!m || !m.length) return;
 
   const n = m.length / 9;
@@ -2034,6 +2069,21 @@ async function placeOrder(shippingCountry, address, payment){
     mailBestelling({ id: ref.id, ...order });   // mag rustig achteraf komen
   }catch(e){ notify("Bestellen mislukt: " + e.message); }
 }
+/* Opruimen zonder iets kwijt te raken: een bestelling krijgt een vlaggetje en
+   verdwijnt uit het gewone overzicht. In het archief staat alles nog. */
+async function hideOrder(orderId, wie){
+  const veld = wie === "klant" ? { hiddenForUser: true } : { hiddenForShop: true };
+  await updateDoc(doc(db, "orders", orderId), veld);
+  notify("Uit het overzicht gehaald — je vindt hem terug in het archief");
+}
+async function unhideOrder(orderId, wie){
+  const veld = wie === "klant" ? { hiddenForUser: false } : { hiddenForShop: false };
+  await updateDoc(doc(db, "orders", orderId), veld);
+  notify("Weer in het overzicht gezet");
+}
+window.__hideOrder = hideOrder;
+window.__unhideOrder = unhideOrder;
+
 async function setOrderStatus(orderId, status){
   await updateDoc(doc(db,"orders",orderId), { status });
   const o = state.orders.find(x => x.id === orderId);
@@ -2317,6 +2367,7 @@ function render(){
     case "payment": app.innerHTML = viewPayment(); attachPaymentHandlers(); return;
     case "login": app.innerHTML = viewAuth(state.__authMode || "login"); attachAuthHandlers(); return;
     case "account": app.innerHTML = viewAccount(); attachShopHandlers(); attachVerifyHandlers(); return;
+    case "archief": app.innerHTML = viewArchief(); attachArchiefHandlers(); return;
     case "admin": app.innerHTML = viewAdmin(); attachAdminHandlers(); return;
   }
   attachShopHandlers();
@@ -2526,6 +2577,35 @@ function priceWithDiscount(p){
   return `<span class="was">${fmtEUR(listPrice(p))}</span> ${nu}`;
 }
 
+/* Duurder filament kost meer. De prijs die bij een product staat gaat uit van
+   het goedkoopste filament dat je aan hebt staan; kiest de klant iets duurders,
+   dan komt het verschil erbij, berekend op het gewicht van het model. */
+function kiloPrijs(f){
+  return f?.pricePerKg ?? DEFAULT_PRICE_PER_KG[f?.type] ?? pricing().pricePerKg;
+}
+function goedkoopsteKilo(p){
+  const list = availableFilaments(p);
+  if (!list.length) return pricing().pricePerKg;
+  return Math.min(...list.map(kiloPrijs));
+}
+function filamentToeslag(p, fil, deelGram){
+  const gram = deelGram ?? (Number(p?.weight) || 0);
+  if (!gram || !fil) return 0;
+  const extra = (gram / 1000) * (kiloPrijs(fil) - goedkoopsteKilo(p)) * pricing().margin;
+  return Math.max(0, Math.ceil(extra * 20) / 20);          // op 5 cent
+}
+/* De toeslag voor wat er op dit moment gekozen staat. Bij een model met
+   kleurvakken verdelen we het gewicht over de onderdelen. */
+function gekozenToeslag(p){
+  if (sizingOf(p)) return 0;                                // die prijs rekent zelf al door
+  const slots = colorSlots(p);
+  if (slots.length){
+    const deel = (Number(p.weight) || 0) / slots.length;
+    return slots.reduce((sum, _, i) => sum + filamentToeslag(p, slotFilament(p, i), deel), 0);
+  }
+  return filamentToeslag(p, currentFilament(p));
+}
+
 /* Hoeveel er nog besteld kan worden: de voorraad min wat al in de wagen ligt.
    Op maat gemaakte producten worden altijd geprint en kennen geen voorraad. */
 function stockLeft(p){
@@ -2729,6 +2809,7 @@ function viewProduct(){
   const inStock = sizing ? true : (p.stock ?? 0) > 0;   // op maat wordt altijd geprint
   const rest = stockLeft(p);                            // wat er nog bij kan
   const korting = discountOf(p);
+  const toeslag = gekozenToeslag(p);                    // duurder plastic kost meer
   return `
     <div style="padding:32px 0;">
       <button class="back" onclick="go('shop')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Terug naar collectie</button>
@@ -2744,8 +2825,13 @@ function viewProduct(){
           ${p.category ? `<span class="badge badge-accent">${esc(p.category)}</span>` : ``}
           <h1 class="font-display" style="font-size:24px;margin:0 0 10px;">${esc(p.name)}</h1>
           <p class="price" style="font-size:26px;margin:0 0 4px;">
-            ${priceWithDiscount(p)} ${discountBadge(p)}
+            ${toeslag
+              ? `<span class="now">${fmtEUR(productPrice(p) + toeslag)}</span>`
+              : priceWithDiscount(p)} ${discountBadge(p)}
           </p>
+          ${toeslag ? `<p class="muted" style="font-size:12px;margin:0 0 6px;">
+            ${fmtEUR(productPrice(p))} + ${fmtEUR(toeslag)} voor het gekozen filament
+          </p>` : ``}
           ${korting ? `<p class="muted" style="font-size:12px;margin:0 0 6px;">
             Tijdelijk ${korting.pct}% korting${korting.until ? ` — nog tot ${esc(new Date(korting.until).toLocaleDateString('nl-BE', { day:'numeric', month:'long' }))}` : ``}.
           </p>` : ``}
@@ -2849,8 +2935,10 @@ function attachProductHandlers(){
       // kleur én maat maken de regel uniek, zodat twee varianten niet samensmelten
       id: [p.id, keuzes.length ? keuzes.map(k=>k.id).join("+") : f?.id, dims?.join("x")].filter(Boolean).join("::"),
       productId: p.id,
-      kind: "product", name: p.name, price: est ? est.unit : productPrice(p), qty,
-      listPrice: est ? null : listPrice(p),
+      kind: "product", name: p.name, qty,
+      price: est ? est.unit : Math.round((productPrice(p) + gekozenToeslag(p)) * 100) / 100,
+      filamentSurcharge: est ? 0 : gekozenToeslag(p),
+      listPrice: est ? null : listPrice(p) + gekozenToeslag(p),
       discountPct: discountOf(p)?.pct || 0,
       dims, printTime: est ? Math.round(est.seconds) : null, grams: est ? +est.grams.toFixed(1) : null,
       filament: f ? { id:f.id, type:f.type, name:f.name, hex:f.hex, finish:f.finish } : null,
@@ -3156,6 +3244,18 @@ function partCard(p){
                 </button>` : ``}
             </div>
             <div style="margin-top:10px;">${platePreview(size)}</div>
+            ${state.profile?.isAdmin && partSlice(p) ? `
+              <div class="cart-item" style="margin-top:10px;padding:10px 12px;">
+                <p class="muted" style="font-size:11px;margin:0 0 6px;">
+                  Alleen jij ziet dit. Slice dit model ook in Bambu Studio en vul de totale
+                  tijd in, dan stelt de shop zichzelf af.
+                </p>
+                <div class="row" style="gap:6px;">
+                  <input type="number" min="1" step="1" class="kalmin" data-part="${esc(p.id)}"
+                         placeholder="min" style="margin:0;max-width:90px;" />
+                  <button class="btn btn-ghost btn-sm kalibreer" data-part="${esc(p.id)}">Kalibreren</button>
+                </div>
+              </div>` : ``}
             ${!fits ? `<p style="font-size:12px;color:var(--accent);margin:8px 0 0;">
               Dit onderdeel past niet op de plaat. Verklein het of splits het op.
             </p>` : ``}
@@ -3303,30 +3403,34 @@ function attachMeshViewers(){
     const fil = partFilament(part);
     if (!part.view) part.view = { yaw: 0.7, pitch: 0.45 };
 
-    const paint = () => {
+    const paint = (ruw) => {
       const opts = {
         hex: fil?.hex || "#B8BCC2", finish: fil?.finish || "basic",
-        yaw: part.view.yaw, pitch: part.view.pitch,
+        yaw: part.view.yaw, pitch: part.view.pitch, ruw,
       };
       const sl = part.viewMode === "lagen" ? partSlice(part) : null;
       // de lagen zijn al op ware grootte gesneden, het model nog niet
       if (sl) drawSlices(cv, part.geo, sl, { ...opts, scale: partFactor(part) });
       else drawMesh(cv, part.geo, opts);
     };
-    paint();
+    paint(false);
     // na het laden van het lettertype of een resize klopt de maat pas echt
-    requestAnimationFrame(paint);
+    requestAnimationFrame(() => paint(false));
 
-    let dragging = false, lx = 0, ly = 0;
+    let dragging = false, lx = 0, ly = 0, netjes = null;
     cv.onpointerdown = (e) => { dragging = true; lx = e.clientX; ly = e.clientY; cv.setPointerCapture(e.pointerId); };
     cv.onpointermove = (e) => {
       if (!dragging) return;
       part.view.yaw += (e.clientX - lx) * 0.011;
       part.view.pitch = Math.max(-1.3, Math.min(1.4, part.view.pitch + (e.clientY - ly) * 0.009));
       lx = e.clientX; ly = e.clientY;
-      paint();
+      paint(true);                    // tijdens het slepen de lichte versie
     };
-    cv.onpointerup = cv.onpointercancel = () => { dragging = false; };
+    cv.onpointerup = cv.onpointercancel = () => {
+      dragging = false;
+      clearTimeout(netjes);
+      netjes = setTimeout(() => paint(false), 60);   // en daarna weer het echte model
+    };
   });
 }
 
@@ -3424,6 +3528,28 @@ function attachCustomHandlers(){
     render();
     await analyseerWachtende();
   };
+
+  document.querySelectorAll('.kalibreer').forEach(btn=>{
+    btn.onclick = async () => {
+      const part = (state.parts || []).find(p => p.id === btn.dataset.part);
+      const veld = document.querySelector(`.kalmin[data-part="${btn.dataset.part}"]`);
+      const echt = parseFloat(veld?.value) * 60;
+      const nu = partEstimate(part)?.seconds;
+      const s = slicerSettings();
+      if (!part || !isFinite(echt) || echt <= 0){ notify("Vul de tijd in minuten in"); return; }
+      // De voorbereidingstijd zit in beide getallen; die telt niet mee in de
+      // verhouding, anders zou hij dubbel meewegen.
+      const onsPrinten = Math.max(1, nu - s.prepSec);
+      const echtPrinten = Math.max(1, echt - s.prepSec);
+      const nieuw = Math.max(0.2, Math.min(6, (s.timeFactor || 1) * (echtPrinten / onsPrinten)));
+      try{
+        await savePricing({ ...pricing(), slicer: { ...s, timeFactor: +nieuw.toFixed(3) } });
+        part.__sliceKey = null;
+        notify(`Afgesteld: correctie ${nieuw.toFixed(2)}× (was ${(s.timeFactor || 1).toFixed(2)}×)`);
+        render();
+      }catch(err){ notify("Opslaan mislukt: " + err.message); }
+    };
+  });
 
   document.querySelectorAll('[data-viewmode]').forEach(btn=>{
     btn.onclick = () => {
@@ -3953,7 +4079,13 @@ function orderCard(o){
       <div class="kv" style="border-top:1px solid var(--surface2);margin-top:8px;padding-top:8px;">
         <span>Totaal</span><span class="font-mono" style="color:var(--accent);font-weight:600;">${fmtEUR(o.total)}</span>
       </div>
-      <button class="detail-toggle" onclick="window.__toggleOrder('${o.id}')">${open ? `${ic("chevron-up")} Minder details` : `${ic("chevron-down")} Meer details`}</button>
+      <div class="between" style="gap:8px;">
+        <button class="detail-toggle" onclick="window.__toggleOrder('${o.id}')">${open ? `${ic("chevron-up")} Minder details` : `${ic("chevron-down")} Meer details`}</button>
+        ${o.status === "Geleverd" && !o.hiddenForUser ? `
+          <button class="detail-toggle" onclick="window.__hideOrder('${o.id}','klant')" title="Uit je overzicht halen; hij blijft in het archief staan">
+            ${ic("eye-slash")} Verbergen
+          </button>` : ``}
+      </div>
       ${open ? `
         <div style="margin-top:10px;">
           <div class="kv"><span>Subtotaal</span><span class="font-mono">${fmtEUR(o.subtotal ?? 0)}</span></div>
@@ -4006,8 +4138,9 @@ function viewAccount(){
   }
   const a = state.profile?.address || {};
   const naam = state.profile?.name || (state.user.email || "").split("@")[0];
-  const actief = state.orders.filter(o => o.status !== "Geleverd");
-  const afgerond = state.orders.filter(o => o.status === "Geleverd");
+  const actief = state.orders.filter(o => o.status !== "Geleverd" && !o.hiddenForUser);
+  const afgerond = state.orders.filter(o => o.status === "Geleverd" && !o.hiddenForUser);
+  const verborgen = state.orders.filter(o => o.hiddenForUser).length;
   return `
     <div style="padding:32px 0;max-width:520px;">
       <h1 class="font-display" style="font-size:22px;margin-bottom:2px;">Hallo, ${esc(naam)}</h1>
@@ -4034,6 +4167,10 @@ function viewAccount(){
           Afgeronde bestellingen. Ze blijven hier staan, maar tellen niet meer mee bij wat er nog moet komen.
         </p>
         ${afgerond.map(orderCard).join("")}` : ``}
+      ${verborgen ? `<p class="muted" style="font-size:12px;margin-top:10px;">
+        ${verborgen} bestelling${verborgen > 1 ? "en" : ""} uit je overzicht gehaald.
+        <button class="btn btn-ghost btn-sm" onclick="go('archief')" style="margin-left:6px;">Bekijk het archief</button>
+      </p>` : ``}
 
       <div class="row" style="margin-top:20px;">
         <button class="btn btn-ghost btn-sm" onclick="go('shop')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Terug naar de shop</button>
@@ -4070,6 +4207,101 @@ function slotAdminBlock(ed){
     </div>`;
 }
 
+/* =====================================================================
+   Archief
+   Alles blijft bewaard. Hier staat elke bestelling, ook wat uit het gewone
+   overzicht is gehaald: op datum gesorteerd, doorzoekbaar op naam of nummer,
+   en te filteren op status.
+   ===================================================================== */
+function archiefRijen(){
+  const zoek = (state.__archZoek || "").trim().toLowerCase();
+  const status = state.__archStatus || "alles";
+  const oud = state.__archOud === true;
+  return state.orders
+    .filter(o => status === "alles" ? true : o.status === status)
+    .filter(o => {
+      if (!zoek) return true;
+      const hooi = [
+        o.userEmail, orderNumber(o),
+        ...(o.items || []).map(i => i.name),
+        o.shippingAddress?.city, o.shippingAddress?.street,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return hooi.includes(zoek);
+    })
+    .sort((a,b) => oud ? a.createdAt - b.createdAt : b.createdAt - a.createdAt);
+}
+function viewArchief(){
+  if (!state.user) return `<div style="padding:32px 0;"><p class="muted">Je bent niet ingelogd.</p></div>`;
+  const beheer = !!state.profile?.isAdmin;
+  const rijen = archiefRijen();
+  const status = state.__archStatus || "alles";
+  return `
+    <div style="padding:32px 0;">
+      <button class="back" onclick="go('${beheer ? "admin" : "account"}')">${ic("arrow-left")} Terug</button>
+      <h1 class="font-display" style="font-size:24px;margin:0 0 4px;">Archief</h1>
+      <p class="muted" style="font-size:13px;margin:0 0 18px;max-width:60ch;">
+        ${beheer ? "Alle bestellingen die ooit binnenkwamen" : "Al je bestellingen"} — ook die uit het
+        overzicht gehaald zijn. Hier gaat nooit iets verloren.
+      </p>
+
+      <div class="cart-item" style="margin-bottom:14px;">
+        <input id="archZoek" placeholder="Zoek op naam, bestelnummer, product of plaats…"
+               value="${esc(state.__archZoek || "")}" style="margin:0 0 10px;" />
+        <div class="fil-types" style="margin:0;">
+          ${["alles", ...ORDER_STEPS].map(x=>`
+            <button class="fil-type ${x===status?'active':''}" data-archstatus="${esc(x)}">${esc(x === "alles" ? "Alles" : x)}</button>`).join("")}
+        </div>
+        <div class="between" style="margin-top:10px;">
+          <span class="muted font-mono" style="font-size:11px;">${rijen.length} van ${state.orders.length}</span>
+          <button class="btn btn-ghost btn-sm" id="archSort">
+            ${ic(state.__archOud ? "arrow-up-1-9" : "arrow-down-9-1")} ${state.__archOud ? "Oudste eerst" : "Nieuwste eerst"}
+          </button>
+        </div>
+      </div>
+
+      ${rijen.length ? rijen.map(o => `
+        <div class="order-card" style="margin-bottom:10px;${(beheer ? o.hiddenForShop : o.hiddenForUser) ? "opacity:.6;" : ""}">
+          <div class="between" style="gap:10px;flex-wrap:wrap;">
+            <div style="min-width:0;">
+              <span class="font-mono" style="font-size:12px;">${esc(orderNumber(o))}</span>
+              <span class="muted font-mono" style="font-size:11px;"> &middot; ${esc(new Date(o.createdAt).toLocaleString('nl-BE'))}</span>
+              ${beheer ? `<div class="muted" style="font-size:12px;">${esc(o.userEmail)}</div>` : ``}
+              <div class="muted" style="font-size:12px;">${esc((o.items || []).map(i => `${i.qty}× ${i.name}`).join(" · "))}</div>
+            </div>
+            <div style="text-align:right;white-space:nowrap;">
+              <span class="badge${o.receivedAt ? " badge-accent" : ""}">${o.receivedAt ? "Ontvangen" : esc(o.status)}</span>
+              <div class="price" style="font-size:14px;">${fmtEUR(o.total)}</div>
+            </div>
+          </div>
+          ${(beheer ? o.hiddenForShop : o.hiddenForUser) ? `
+            <button class="detail-toggle" onclick="window.__unhideOrder('${o.id}','${beheer ? "shop" : "klant"}')">
+              ${ic("eye")} Terugzetten in het overzicht
+            </button>` : ``}
+        </div>`).join("")
+        : `<p class="muted" style="font-size:13px;">Niets gevonden met deze zoekopdracht.</p>`}
+    </div>`;
+}
+function attachArchiefHandlers(){
+  const z = document.getElementById('archZoek');
+  if (z){
+    z.oninput = () => {
+      state.__archZoek = z.value;
+      // alleen de lijst verversen, zodat de cursor in het zoekveld blijft staan
+      const app = document.getElementById('app');
+      const pos = z.selectionStart;
+      app.innerHTML = viewArchief();
+      attachArchiefHandlers();
+      const n = document.getElementById('archZoek');
+      if (n){ n.focus(); n.setSelectionRange(pos, pos); }
+    };
+  }
+  document.querySelectorAll('[data-archstatus]').forEach(b=>{
+    b.onclick = () => { state.__archStatus = b.dataset.archstatus; render(); };
+  });
+  const sort = document.getElementById('archSort');
+  if (sort) sort.onclick = () => { state.__archOud = !state.__archOud; render(); };
+}
+
 function viewAdmin(){
   const tab = state.__adminTab || "products";
   const ed = state.__editing ? state.products.find(p => p.id === state.__editing) : null;
@@ -4096,10 +4328,15 @@ function viewAdmin(){
             ${esc(orderNumber(o))} · ${esc(new Date(o.createdAt).toLocaleString('nl-BE'))}
           </div>
         </div>
-        <select class="field" style="width:auto;max-width:100%;margin:0;padding:6px 9px;font-size:12px;flex:0 0 auto;"
-                onchange="window.__setStatus('${o.id}',this.value)">
-          ${ORDER_STEPS.map(s=>`<option ${s===o.status?'selected':''}>${s}</option>`).join("")}
-        </select>
+        <div class="row" style="gap:6px;flex:0 0 auto;">
+          <select class="field" style="width:auto;max-width:100%;margin:0;padding:6px 9px;font-size:12px;"
+                  onchange="window.__setStatus('${o.id}',this.value)">
+            ${ORDER_STEPS.map(s=>`<option ${s===o.status?'selected':''}>${s}</option>`).join("")}
+          </select>
+          ${o.status === "Geleverd" ? `
+            <button class="btn btn-ghost btn-sm" onclick="window.__hideOrder('${o.id}','shop')"
+                    title="Opbergen: uit dit overzicht, blijft in het archief">${ic("box-archive")}</button>` : ``}
+        </div>
       </div>
       ${o.receivedAt ? `<p style="font-size:11px;margin:-2px 0 8px;color:var(--accent);font-weight:600;">
         ${ic("circle-check")} Klant bevestigde de ontvangst op ${esc(new Date(o.receivedAt).toLocaleString('nl-BE'))}
@@ -4129,17 +4366,28 @@ function viewAdmin(){
       ${o.paymentMethod ? `<div class="muted font-mono" style="font-size:10px;margin-top:6px;word-break:break-word;">${esc(o.paymentMethod)}${o.paymentRef ? " · " + esc(o.paymentRef) : ""}${o.demoPayment ? " · TESTGELD" : ""}</div>` : ``}
     </div>`;
 
-  // Wat nog werk vraagt bovenaan; afgeronde bestellingen zakken naar onder.
-  const lopend = state.orders.filter(o => o.status !== "Geleverd");
-  const klaar  = state.orders.filter(o => o.status === "Geleverd");
+  // Wat nog werk vraagt bovenaan; afgeronde bestellingen zakken naar onder, en
+  // wat je opgeruimd hebt is hier weg maar staat nog in het archief.
+  const zichtbaar = state.orders.filter(o => !o.hiddenForShop);
+  const lopend = zichtbaar.filter(o => o.status !== "Geleverd");
+  const klaar  = zichtbaar.filter(o => o.status === "Geleverd");
+  const weg = state.orders.length - zichtbaar.length;
   const orderRows = `
     ${lopend.map(orderRow).join("")}
     ${klaar.length ? `
-      <h3 class="font-display" style="font-size:14px;margin:22px 0 4px;">Afgehandeld (${klaar.length})</h3>
+      <div class="between" style="margin:22px 0 4px;">
+        <h3 class="font-display" style="font-size:14px;margin:0;">Afgehandeld (${klaar.length})</h3>
+        <button class="btn btn-ghost btn-sm" id="ruimOpBtn">${ic("box-archive")} Alles opbergen</button>
+      </div>
       <p class="muted" style="font-size:11px;margin:0 0 10px;">
         ${klaar.filter(o => o.receivedAt).length} daarvan zijn door de klant zelf bevestigd.
       </p>
-      ${klaar.map(orderRow).join("")}` : ``}`;
+      ${klaar.map(orderRow).join("")}` : ``}
+    <p class="muted" style="font-size:12px;margin-top:16px;">
+      ${weg ? `${weg} bestelling${weg > 1 ? "en" : ""} opgeborgen. ` : ""}
+      Alles blijft bewaard.
+      <button class="btn btn-ghost btn-sm" onclick="go('archief')" style="margin-left:6px;">${ic("box-archive")} Naar het archief</button>
+    </p>`;
   return `
     <div style="padding:32px 0;">
       <h1 class="font-display" style="font-size:26px;">Shopbeheer</h1>
@@ -4473,8 +4721,14 @@ const SLICER_FIELDS = [
   ["speedInner", "Binnenwanden (mm/s)", 10],
   ["speedSolid", "Massieve vlakken (mm/s)", 10],
   ["speedSparse", "Vulling (mm/s)", 10],
+  ["speedTop", "Bovenvlak (mm/s)", 10],
+  ["speedFirst", "Eerste laag (mm/s)", 5],
   ["accelOuter", "Versnelling buitenwand (mm/s²)", 500],
   ["accelPrint", "Versnelling overig printwerk (mm/s²)", 500],
+  ["accelFirst", "Versnelling eerste laag (mm/s²)", 100],
+  ["prepSec", "Voorbereiden per print (s)", 30],
+  ["minLayerSec", "Minimum per laag, koeling (s)", 1],
+  ["timeFactor", "Correctie op de printtijd", 0.05],
   ["travelFactor", "Toeslag verplaatsen (1.08 = 8%)", 0.01],
   ["layerSec", "Vaste tijd per laag (s)", 0.1],
 ];
@@ -4684,6 +4938,15 @@ function sizingFromForm(){
 }
 
 function attachAdminHandlers(){
+  const ruim = document.getElementById('ruimOpBtn');
+  if (ruim) ruim.onclick = async () => {
+    const klaar = state.orders.filter(o => o.status === "Geleverd" && !o.hiddenForShop);
+    ruim.disabled = true;
+    try{
+      for (const o of klaar) await updateDoc(doc(db, "orders", o.id), { hiddenForShop: true });
+      notify(`${klaar.length} bestelling${klaar.length === 1 ? "" : "en"} opgeborgen`);
+    }catch(err){ notify("Opbergen mislukt: " + err.message); ruim.disabled = false; }
+  };
   attachFilamentHandlers();
   attachPricingHandlers();
   attachFileHandlers();
