@@ -267,6 +267,10 @@
   .viewer img{width:100%;height:100%;object-fit:cover;display:block;}
   .viewer canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab;}
   .viewer canvas:active{cursor:grabbing;}
+  .viewer-leeg{
+    position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;padding:20px;color:var(--paper);opacity:.62;
+  }
   .viewer-tag{
     position:absolute;left:10px;bottom:10px;border-radius:999px;background:var(--ink);color:var(--paper);
     font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;padding:5px 10px;
@@ -394,29 +398,56 @@
      Links waar je heen wil, rechts het scherm zelf. Op een telefoon wordt de
      lijst een rij knoppen die je opzij schuift. */
   .beheer{display:grid;grid-template-columns:1fr;gap:22px;align-items:start;}
-  @media(min-width:900px){
-    .beheer{grid-template-columns:210px minmax(0,1fr);gap:34px;}
-    .beheer-nav{position:sticky;top:86px;flex-direction:column;overflow:visible;padding:0;margin:0;}
-    .beheer-nav button{width:100%;justify-content:flex-start;}
-  }
+  /* Op een telefoon een raster van grote knoppen: alles in één blik, en groot
+     genoeg om met een duim te raken. Geen strook die je opzij moet schuiven. */
   .beheer-nav{
-    display:flex;gap:4px;overflow-x:auto;padding-bottom:6px;margin-bottom:2px;
-    scrollbar-width:none;-webkit-overflow-scrolling:touch;
+    display:grid;grid-template-columns:repeat(2,1fr);gap:7px;margin-bottom:4px;
   }
-  .beheer-nav::-webkit-scrollbar{display:none;}
+  @media(min-width:560px) and (max-width:899px){
+    .beheer-nav{grid-template-columns:repeat(4,1fr);}
+  }
   .beheer-nav button{
-    display:flex;align-items:center;gap:9px;flex:0 0 auto;padding:9px 13px;border-radius:10px;
-    border:1px solid transparent;background:none;color:var(--muted);font-size:13px;font-weight:500;
-    white-space:nowrap;text-align:left;
+    display:flex;align-items:center;gap:9px;padding:13px 12px;border-radius:12px;
+    border:1px solid var(--line);background:var(--surface);color:var(--muted);
+    font-size:13px;font-weight:500;white-space:nowrap;text-align:left;min-height:48px;
   }
   .beheer-nav button:hover{background:var(--surface2);color:var(--ink);}
   .beheer-nav button.active{background:var(--ink);color:var(--paper);}
   .beheer-nav button i{width:15px;flex-shrink:0;text-align:center;}
+  .beheer-nav button span{overflow:hidden;text-overflow:ellipsis;}
   .beheer-nav .telbol{
     margin-left:auto;background:var(--accent);color:#fff;border-radius:999px;
     font-family:'IBM Plex Mono',monospace;font-size:10px;padding:1px 6px;flex-shrink:0;
   }
   .beheer-nav button.active .telbol{background:var(--paper);color:var(--ink);}
+  @media(min-width:900px){
+    .beheer{grid-template-columns:210px minmax(0,1fr);gap:34px;}
+    .beheer-nav{position:sticky;top:86px;display:flex;flex-direction:column;gap:4px;margin:0;}
+    .beheer-nav button{
+      width:100%;justify-content:flex-start;padding:9px 13px;min-height:0;
+      border-color:transparent;background:none;border-radius:10px;
+    }
+  }
+  /* de afvinklijst per bestelling */
+  .stappen{background:var(--surface2);border-radius:12px;padding:11px 12px;margin:0 0 12px;}
+  .stappen.af{background:color-mix(in srgb, var(--accent) 10%, var(--surface2));}
+  .stappen-balk{width:74px;height:4px;border-radius:999px;background:var(--line);overflow:hidden;flex-shrink:0;}
+  .stappen-balk > span{display:block;height:100%;background:var(--accent);border-radius:999px;transition:width .25s;}
+  .stap{
+    display:flex;align-items:center;gap:10px;width:100%;min-height:42px;padding:8px 10px;margin-bottom:5px;
+    border:1px solid var(--line);border-radius:10px;background:var(--surface);
+    font-size:13px;color:var(--ink);text-align:left;
+  }
+  .stap:last-child{margin-bottom:0;}
+  .stap i{color:var(--muted);width:15px;text-align:center;flex-shrink:0;}
+  .stap span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+  .stap-vink{
+    width:20px;height:20px;border-radius:6px;border:1.5px solid var(--line-strong);flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--paper);
+  }
+  .stap.ja{border-color:var(--accent);}
+  .stap.ja .stap-vink{background:var(--accent);border-color:var(--accent);}
+  .stap.ja > span:last-child{color:var(--muted);text-decoration:line-through;}
   .paneel-kop{margin-bottom:16px;}
   .paneel-kop h2{font-family:'Archivo',sans-serif;font-weight:700;font-size:19px;margin:0 0 3px;letter-spacing:-.01em;}
   .paneel-kop p{color:var(--muted);font-size:13px;margin:0;max-width:62ch;line-height:1.55;}
@@ -3376,7 +3407,15 @@ function viewProduct(){
     ? `<canvas id="productMesh" class="mesh3d" style="width:100%;height:100%;display:block;touch-action:none;cursor:grab;"></canvas>`
     : all.length
       ? `<img id="galleryMain" src="${esc(all[active])}" alt="${esc(p.name)}" />`
-      : `<span><i class="fa-solid fa-cube" aria-hidden="true"></i></span>`;
+      // Niets om te tonen. Vroeger stond hier alleen een klein icoontje in een
+      // zwart vlak; dan lijkt het alsof er iets stuk is.
+      : `<div class="viewer-leeg">
+           <p style="font-size:30px;margin:0 0 8px;">${ic("cube")}</p>
+           <p style="font-size:13px;margin:0;">Nog geen foto of 3D-model</p>
+           ${state.profile?.isAdmin ? `
+             <button class="btn btn-ghost btn-sm" style="margin-top:12px;"
+                     onclick="window.__editProduct('${p.id}')">Voeg er een toe</button>` : ``}
+         </div>`;
   const strip = all.length > 1 ? `
     <div class="strip">
       ${all.map((src,i)=>`<button class="${i===active?'active':''}" data-img="${i}"><img src="${esc(src)}" alt="Afbeelding ${i+1}" /></button>`).join("")}
@@ -4979,7 +5018,6 @@ function attachAuthHandlers(){
 }
 
 /* --------------------------- bestellingsopvolging --------------------------- */
-const ORDER_STEPS = ["In verwerking", "Wordt geprint", "Verzonden", "Geleverd"];
 /* Werkdagen na de bestelling: printen plus verzending, per bestemming. */
 const DELIVERY_DAYS = {
   "België": [3, 5], "Nederland": [4, 6], "Duitsland": [4, 7], "Frankrijk": [4, 7],
@@ -5334,6 +5372,7 @@ function viewAdmin(){
       ${o.receivedAt ? `<p style="font-size:11px;margin:-2px 0 8px;color:var(--accent);font-weight:600;">
         ${ic("circle-check")} Klant bevestigde de ontvangst op ${esc(new Date(o.receivedAt).toLocaleString('nl-BE'))}
       </p>` : ``}
+      ${stappenBlok(o)}
       ${o.items.map(i=>`
         <div class="row" style="gap:7px;font-size:13px;margin-bottom:3px;">
           ${i.filament ? `<span class="fil-chip ${finishClass(i.filament.finish)}" style="width:13px;height:13px;border-radius:4px;background-color:${esc(i.filament.hex)};flex-shrink:0;"></span>` : ``}
@@ -5625,6 +5664,77 @@ function viewAdmin(){
       </div>
         </div>
       </div>
+    </div>`;
+}
+
+const ORDER_STEPS = ["In verwerking", "Wordt geprint", "Verzonden", "Geleverd"];
+
+/* =====================================================================
+   Wat er per pakje moet gebeuren
+   Een bestelling is meer dan een status: printen, nakijken, inpakken, label,
+   wegbrengen. Die stappen vink je hier af, per bestelling. De status volgt
+   vanzelf mee — vink je "verzonden" af, dan springt de bestelling mee op
+   Verzonden en krijgt de klant zijn bericht.
+   ===================================================================== */
+const STANDAARD_STAPPEN = [
+  { id: "gesneden",  naam: "Model klaargezet",     icoon: "layer-group" },
+  { id: "geprint",   naam: "Geprint",              icoon: "print",       status: "Wordt geprint" },
+  { id: "nagekeken", naam: "Nagekeken en bijgewerkt", icoon: "magnifying-glass" },
+  { id: "ingepakt",  naam: "Ingepakt",             icoon: "box" },
+  { id: "label",     naam: "Label geprint",        icoon: "tag" },
+  { id: "weg",       naam: "Weggebracht",          icoon: "truck",       status: "Verzonden" },
+];
+function stappenVan(o){
+  // afhalen hoeft geen label en gaat niet naar de post
+  const uit = o.pickupAt ? ["label", "weg"] : [];
+  const lijst = STANDAARD_STAPPEN.filter(st => !uit.includes(st.id));
+  return o.pickupAt
+    ? [...lijst, { id: "klaargezet", naam: "Klaargezet om af te halen", icoon: "shop", status: "Verzonden" }]
+    : lijst;
+}
+function stapKlaar(o, id){ return !!(o.steps || {})[id]; }
+function stappenTeller(o){
+  const l = stappenVan(o);
+  return { klaar: l.filter(st => stapKlaar(o, st.id)).length, totaal: l.length };
+}
+window.__zetStap = async (orderId, stapId, aan) => {
+  const o = state.orders.find(x => x.id === orderId);
+  if (!o) return;
+  const stap = stappenVan(o).find(st => st.id === stapId);
+  const steps = { ...(o.steps || {}), [stapId]: aan };
+  if (!aan) delete steps[stapId];
+  const patch = { steps };
+  // Hoort er een status bij deze stap, dan schuift die mee — maar nooit terug.
+  if (aan && stap?.status && ORDER_STEPS.indexOf(stap.status) > ORDER_STEPS.indexOf(o.status)){
+    patch.status = stap.status;
+  }
+  try{
+    await updateDoc(doc(db, "orders", orderId), patch);
+    if (patch.status === "Verzonden") mailVerzonden({ ...o, ...patch });
+  }catch(err){ notify("Bijwerken mislukt: " + err.message); }
+};
+
+function stappenBlok(o){
+  const lijst = stappenVan(o);
+  const t = stappenTeller(o);
+  const af = t.klaar === t.totaal;
+  return `
+    <div class="stappen${af ? " af" : ""}">
+      <div class="between" style="margin-bottom:8px;">
+        <span style="font-size:12px;font-weight:600;">
+          ${af ? ic("circle-check") + " Alles gedaan" : `Nog te doen — ${t.klaar} van ${t.totaal}`}
+        </span>
+        <span class="stappen-balk"><span style="width:${Math.round(t.klaar / t.totaal * 100)}%;"></span></span>
+      </div>
+      ${lijst.map(st => {
+        const ja = stapKlaar(o, st.id);
+        return `
+          <button class="stap${ja ? " ja" : ""}" data-stap="${esc(o.id)}|${esc(st.id)}">
+            <span class="stap-vink">${ja ? ic("check") : ""}</span>
+            ${ic(st.icoon)}
+            <span>${esc(st.naam)}</span>
+          </button>`;
+      }).join("")}
     </div>`;
 }
 
@@ -6323,13 +6433,14 @@ window.__editProduct = (id) => {
   state.__draftImages = productImages(p).slice();
   state.__draftSlots = colorSlots(p).map(sl => ({ ...sl }));
   state.__draftModel = undefined;          // wat er al staat, blijft staan
+  state.__draftProduct = null;
   state.__adminTab = "products";
   render();
   window.scrollTo(0,0);
 };
 window.__cancelEdit = () => {
   state.__editing = null; state.__draftImages = []; state.__draftSlots = null;
-  state.__draftModel = undefined;
+  state.__draftModel = undefined; state.__draftProduct = null;
   render();
 };
 window.__removeDraftImage = (i) => { state.__draftImages.splice(i,1); renderImageTray(); };
@@ -6363,6 +6474,26 @@ function sizingFromForm(){
   };
 }
 
+/* Het productformulier wordt opnieuw getekend zodra je een kleurvak toevoegt
+   of een model kiest. Zonder dit was je dan kwijt wat je al ingetypt had. */
+const PRODUCT_VELDEN = ['pName','pPrice','pStock','pDesc','pCategory','pColor','pMaterial',
+  'pInfill','pLayer','pDim','pTime','pWeight','pDiscount','pDiscountUntil',
+  'pSolidity','pSizeInfill','pSizeLayer'];
+function herstelProductFormulier(){
+  const d = state.__draftProduct;
+  for (const id of PRODUCT_VELDEN){
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (d && d[id] !== undefined && d[id] !== el.value) el.value = d[id];
+    el.addEventListener('input', () => {
+      (state.__draftProduct ||= {})[id] = el.value;
+    });
+    el.addEventListener('change', () => {
+      (state.__draftProduct ||= {})[id] = el.value;
+    });
+  }
+}
+
 function attachAdminHandlers(){
   // zoeken en filteren in de bestellingen
   const oz = document.getElementById('ordZoek');
@@ -6381,6 +6512,15 @@ function attachAdminHandlers(){
     render();
   };
 
+  document.querySelectorAll('[data-stap]').forEach(b => {
+    b.onclick = () => {
+      const [orderId, stapId] = b.dataset.stap.split("|");
+      window.__zetStap(orderId, stapId, !b.classList.contains("ja"));
+      // meteen zichtbaar; de echte stand komt zo terug uit de database
+      b.classList.toggle("ja");
+    };
+  });
+
   const ruim = document.getElementById('ruimOpBtn');
   if (ruim) ruim.onclick = async () => {
     const klaar = state.orders.filter(o => o.status === "Geleverd" && !o.hiddenForShop);
@@ -6397,6 +6537,7 @@ function attachAdminHandlers(){
   if (sizingBox) sizingBox.onchange = () => {
     document.getElementById('sizingFields').classList.toggle('hidden', !sizingBox.checked);
   };
+  herstelProductFormulier();
   if (!Array.isArray(state.__draftImages)) state.__draftImages = [];
   if (!Array.isArray(state.__draftSlots)) state.__draftSlots = colorSlots(state.__editing ? state.products.find(p => p.id === state.__editing) || {} : {});
 
@@ -6521,6 +6662,7 @@ function attachAdminHandlers(){
       state.__draftImages = [];
       state.__draftSlots = null;
       state.__draftModel = undefined;
+      state.__draftProduct = null;
       render();
       window.scrollTo(0,0);
     }catch(err){
