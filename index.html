@@ -429,9 +429,16 @@
     }
   }
   /* de afvinklijst per bestelling */
-  .stappen{background:var(--surface2);border-radius:12px;padding:11px 12px;margin:0 0 12px;}
+  .stappen{background:var(--surface2);border-radius:12px;margin:0 0 12px;overflow:hidden;}
   .stappen.af{background:color-mix(in srgb, var(--accent) 10%, var(--surface2));}
-  .stappen-balk{width:74px;height:4px;border-radius:999px;background:var(--line);overflow:hidden;flex-shrink:0;}
+  .stappen > summary{
+    display:flex;align-items:center;gap:10px;padding:11px 12px;cursor:pointer;list-style:none;min-height:44px;
+  }
+  .stappen > summary::-webkit-details-marker{display:none;}
+  .stappen > summary::after{content:"⌄";margin-left:2px;color:var(--muted);font-size:15px;line-height:1;}
+  .stappen[open] > summary::after{content:"⌃";}
+  .stappen-body{padding:0 12px 12px;}
+  .stappen-balk{flex:1;min-width:40px;max-width:110px;margin-left:auto;height:4px;border-radius:999px;background:var(--line);overflow:hidden;}
   .stappen-balk > span{display:block;height:100%;background:var(--accent);border-radius:999px;transition:width .25s;}
   .stap{
     display:flex;align-items:center;gap:10px;width:100%;min-height:42px;padding:8px 10px;margin-bottom:5px;
@@ -446,8 +453,13 @@
     display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--paper);
   }
   .stap.ja{border-color:var(--accent);}
-  .stap.ja .stap-vink{background:var(--accent);border-color:var(--accent);}
+  .stap.ja .stap-vink, .stap-vink.ja{background:var(--accent);border-color:var(--accent);}
   .stap.ja > span:last-child{color:var(--muted);text-decoration:line-through;}
+  .dagkop{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--muted);margin:18px 0 8px;
+  }
+  .dagkop:first-child{margin-top:0;}
   .paneel-kop{margin-bottom:16px;}
   .paneel-kop h2{font-family:'Archivo',sans-serif;font-weight:700;font-size:19px;margin:0 0 3px;letter-spacing:-.01em;}
   .paneel-kop p{color:var(--muted);font-size:13px;margin:0;max-width:62ch;line-height:1.55;}
@@ -5294,6 +5306,13 @@ function viewArchief(){
             ${ic(state.__archOud ? "arrow-up-1-9" : "arrow-down-9-1")} ${state.__archOud ? "Oudste eerst" : "Nieuwste eerst"}
           </button>
         </div>
+        ${beheer && rijen.length ? `
+          <div class="between" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
+            <span class="muted" style="font-size:12px;">Proefbestellingen opruimen?</span>
+            <button class="btn btn-ghost btn-sm" id="wisAllesBtn" style="color:var(--accent);">
+              ${ic("trash")} Wis deze ${rijen.length}
+            </button>
+          </div>` : ``}
       </div>
 
       ${rijen.length ? rijen.map(o => `
@@ -5310,15 +5329,50 @@ function viewArchief(){
               <div class="price" style="font-size:14px;">${fmtEUR(o.total)}</div>
             </div>
           </div>
-          ${(beheer ? o.hiddenForShop : o.hiddenForUser) ? `
-            <button class="detail-toggle" onclick="window.__unhideOrder('${o.id}','${beheer ? "shop" : "klant"}')">
-              ${ic("eye")} Terugzetten in het overzicht
-            </button>` : ``}
+          <div class="row" style="gap:10px;flex-wrap:wrap;">
+            ${(beheer ? o.hiddenForShop : o.hiddenForUser) ? `
+              <button class="detail-toggle" onclick="window.__unhideOrder('${o.id}','${beheer ? "shop" : "klant"}')">
+                ${ic("eye")} Terugzetten in het overzicht
+              </button>` : ``}
+            ${beheer ? `
+              <button class="detail-toggle" style="color:var(--muted);margin-left:auto;"
+                      data-wisorder="${esc(o.id)}">${ic("trash")} Wissen</button>` : ``}
+          </div>
         </div>`).join("")
         : `<p class="muted" style="font-size:13px;">Niets gevonden met deze zoekopdracht.</p>`}
     </div>`;
 }
+/* Wissen kan alleen hier, en alleen als beheerder: in het gewone overzicht
+   berg je een bestelling op, hier haal je hem echt weg. Bedoeld om je eigen
+   proefbestellingen op te ruimen — een echte bestelling hoor je te bewaren. */
+window.__wisBestelling = async (id) => {
+  try{
+    await deleteDoc(doc(db, "orders", id));
+    notify("Bestelling gewist");
+  }catch(err){ notify("Wissen mislukt: " + firestoreHint(err)); }
+};
+
 function attachArchiefHandlers(){
+  document.querySelectorAll('[data-wisorder]').forEach(b => {
+    b.onclick = () => {
+      if (!confirm("Deze bestelling definitief wissen? Dit kan niet ongedaan gemaakt worden.")) return;
+      window.__wisBestelling(b.dataset.wisorder);
+    };
+  });
+  const wisAlles = document.getElementById('wisAllesBtn');
+  if (wisAlles) wisAlles.onclick = async () => {
+    const lijst = archiefRijen();
+    if (!confirm(`${lijst.length} bestelling${lijst.length === 1 ? "" : "en"} definitief wissen? Dit kan niet ongedaan gemaakt worden.`)) return;
+    wisAlles.disabled = true;
+    let fout = null, weg = 0;
+    for (const o of lijst){
+      try{ await deleteDoc(doc(db, "orders", o.id)); weg++; }
+      catch(err){ fout = err; break; }
+    }
+    notify(fout ? `${weg} gewist, daarna mislukt: ${firestoreHint(fout)}`
+                : `${weg} bestelling${weg === 1 ? "" : "en"} gewist`);
+    wisAlles.disabled = false;
+  };
   const z = document.getElementById('archZoek');
   if (z){
     z.oninput = () => {
@@ -5362,7 +5416,7 @@ function viewAdmin(){
         <div class="order-meta">
           <div style="font-size:13px;font-weight:600;word-break:break-word;">${esc(o.userEmail)}</div>
           <div class="muted font-mono" style="font-size:11px;">
-            ${esc(orderNumber(o))} · ${esc(new Date(o.createdAt).toLocaleString('nl-BE'))}
+            ${esc(orderNumber(o))} · ${esc(hoeLang(o.createdAt))}
           </div>
         </div>
         <div class="row" style="gap:6px;flex:0 0 auto;">
@@ -5430,8 +5484,18 @@ function viewAdmin(){
   const klaar  = zichtbaar.filter(o => o.status === "Geleverd");
   const weg = state.orders.length - openstaand.length;
   const gefilterd = openstaand.length - zichtbaar.length;
+  /* Per dag gegroepeerd: zo zie je meteen wat er vandaag binnenkwam. */
+  const perDag = (lijst) => {
+    let vorige = null;
+    return lijst.map(o => {
+      const kop = dagKop(o.createdAt);
+      const nieuw = kop !== vorige;
+      vorige = kop;
+      return (nieuw ? `<p class="dagkop">${esc(kop)}</p>` : ``) + orderRow(o);
+    }).join("");
+  };
   const orderRows = `
-    ${lopend.map(orderRow).join("")}
+    ${perDag(lopend)}
     ${klaar.length ? `
       <div class="between" style="margin:22px 0 4px;">
         <h3 class="font-display" style="font-size:14px;margin:0;">Afgehandeld (${klaar.length})</h3>
@@ -5440,7 +5504,7 @@ function viewAdmin(){
       <p class="muted" style="font-size:11px;margin:0 0 10px;">
         ${klaar.filter(o => o.receivedAt).length} daarvan zijn door de klant zelf bevestigd.
       </p>
-      ${klaar.map(orderRow).join("")}` : ``}
+      ${perDag(klaar)}` : ``}
     ${zichtbaar.length === 0 && openstaand.length ? `
       <p class="muted" style="font-size:13px;">Niets gevonden met deze zoekopdracht.</p>` : ``}
     <p class="muted" style="font-size:12px;margin-top:16px;">
@@ -5681,6 +5745,29 @@ function viewAdmin(){
 
 const ORDER_STEPS = ["In verwerking", "Wordt geprint", "Verzonden", "Geleverd"];
 
+/* "net binnen", "2 uur geleden", "gisteren" — dat leest sneller dan een datum
+   met uren en minuten erbij. */
+function hoeLang(t){
+  const m = Math.round((Date.now() - t) / 60000);
+  if (m < 2) return "net binnen";
+  if (m < 60) return m + " min geleden";
+  const u = Math.round(m / 60);
+  if (u < 24) return u + (u === 1 ? " uur geleden" : " uur geleden");
+  const d = Math.round(u / 24);
+  if (d === 1) return "gisteren";
+  if (d < 8) return d + " dagen geleden";
+  return new Date(t).toLocaleDateString('nl-BE', { day: 'numeric', month: 'long' });
+}
+/* Kopje boven een groepje bestellingen van dezelfde dag. */
+function dagKop(t){
+  const d = new Date(t); d.setHours(0,0,0,0);
+  const vandaag = new Date(); vandaag.setHours(0,0,0,0);
+  const verschil = Math.round((vandaag - d) / 864e5);
+  if (verschil === 0) return "Vandaag";
+  if (verschil === 1) return "Gisteren";
+  return new Date(t).toLocaleDateString('nl-BE', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
 /* =====================================================================
    Wat er per pakje moet gebeuren
    Een bestelling is meer dan een status: printen, nakijken, inpakken, label,
@@ -5726,28 +5813,34 @@ window.__zetStap = async (orderId, stapId, aan) => {
   }catch(err){ notify("Bijwerken mislukt: " + err.message); }
 };
 
+/* De lijst zit weggeklapt: opengeslagen bij elke bestelling maakt het
+   overzicht onleesbaar. De kop zegt al hoe ver je bent. */
 function stappenBlok(o){
   const lijst = stappenVan(o);
   const t = stappenTeller(o);
   const af = t.klaar === t.totaal;
+  const open = state.__openStappen === o.id;
   return `
-    <div class="stappen${af ? " af" : ""}">
-      <div class="between" style="margin-bottom:8px;">
-        <span style="font-size:12px;font-weight:600;">
-          ${af ? ic("circle-check") + " Alles gedaan" : `Nog te doen — ${t.klaar} van ${t.totaal}`}
+    <details class="stappen${af ? " af" : ""}"${open ? " open" : ""} data-stapvak="${esc(o.id)}">
+      <summary>
+        <span class="stap-vink${af ? " ja" : ""}">${af ? ic("check") : ""}</span>
+        <span style="font-size:13px;font-weight:600;">
+          ${af ? "Alles gedaan" : `${t.klaar} van ${t.totaal} gedaan`}
         </span>
         <span class="stappen-balk"><span style="width:${Math.round(t.klaar / t.totaal * 100)}%;"></span></span>
+      </summary>
+      <div class="stappen-body">
+        ${lijst.map(st => {
+          const ja = stapKlaar(o, st.id);
+          return `
+            <button class="stap${ja ? " ja" : ""}" data-stap="${esc(o.id)}|${esc(st.id)}">
+              <span class="stap-vink">${ja ? ic("check") : ""}</span>
+              ${ic(st.icoon)}
+              <span>${esc(st.naam)}</span>
+            </button>`;
+        }).join("")}
       </div>
-      ${lijst.map(st => {
-        const ja = stapKlaar(o, st.id);
-        return `
-          <button class="stap${ja ? " ja" : ""}" data-stap="${esc(o.id)}|${esc(st.id)}">
-            <span class="stap-vink">${ja ? ic("check") : ""}</span>
-            ${ic(st.icoon)}
-            <span>${esc(st.naam)}</span>
-          </button>`;
-      }).join("")}
-    </div>`;
+    </details>`;
 }
 
 /* De onderdelen van het beheer, in de volgorde waarin je ze nodig hebt. */
@@ -6524,6 +6617,11 @@ function attachAdminHandlers(){
     render();
   };
 
+  document.querySelectorAll('[data-stapvak]').forEach(d => {
+    d.addEventListener('toggle', () => {
+      state.__openStappen = d.open ? d.dataset.stapvak : null;
+    });
+  });
   document.querySelectorAll('[data-stap]').forEach(b => {
     b.onclick = () => {
       const [orderId, stapId] = b.dataset.stap.split("|");

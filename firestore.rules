@@ -86,8 +86,8 @@ service cloud.firestore {
     // --- bestellingen ----------------------------------------------
     // Je ziet alleen je eigen bestellingen; de beheerder ziet alles.
     // Een klant mag zijn bestelling plaatsen, de ontvangst bevestigen en hem
-    // uit zijn overzicht halen — verder niets. Wissen kan niemand: alles
-    // blijft bewaard in het archief.
+    // uit zijn overzicht halen — verder niets. Wissen kan alleen de beheerder,
+    // en alleen vanuit het archief: normaal blijft alles bewaard.
     match /orders/{id} {
       allow read: if beheerder() || (ingelogd() && resource.data.uid == request.auth.uid);
       allow create: if ingelogd() && request.resource.data.uid == request.auth.uid;
@@ -95,7 +95,7 @@ service cloud.firestore {
         || (ingelogd() && resource.data.uid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['status', 'receivedAt', 'hiddenForUser']));
-      allow delete: if false;
+      allow delete: if beheerder();
     }
 
     // --- geüploade modellen ----------------------------------------
