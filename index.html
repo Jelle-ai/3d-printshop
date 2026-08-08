@@ -387,6 +387,57 @@
   .demo-banner{border:1px solid var(--accent);border-left-width:3px;border-radius:12px;padding:13px 15px;font-size:12.5px;margin-bottom:18px;background:var(--surface);}
 
   /* ---------- beheer ---------- */
+  /* ---------- shopbeheer ----------
+     Links waar je heen wil, rechts het scherm zelf. Op een telefoon wordt de
+     lijst een rij knoppen die je opzij schuift. */
+  .beheer{display:grid;grid-template-columns:1fr;gap:22px;align-items:start;}
+  @media(min-width:900px){
+    .beheer{grid-template-columns:210px minmax(0,1fr);gap:34px;}
+    .beheer-nav{position:sticky;top:86px;flex-direction:column;overflow:visible;padding:0;margin:0;}
+    .beheer-nav button{width:100%;justify-content:flex-start;}
+  }
+  .beheer-nav{
+    display:flex;gap:4px;overflow-x:auto;padding-bottom:6px;margin-bottom:2px;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch;
+  }
+  .beheer-nav::-webkit-scrollbar{display:none;}
+  .beheer-nav button{
+    display:flex;align-items:center;gap:9px;flex:0 0 auto;padding:9px 13px;border-radius:10px;
+    border:1px solid transparent;background:none;color:var(--muted);font-size:13px;font-weight:500;
+    white-space:nowrap;text-align:left;
+  }
+  .beheer-nav button:hover{background:var(--surface2);color:var(--ink);}
+  .beheer-nav button.active{background:var(--ink);color:var(--paper);}
+  .beheer-nav button i{width:15px;flex-shrink:0;text-align:center;}
+  .beheer-nav .telbol{
+    margin-left:auto;background:var(--accent);color:#fff;border-radius:999px;
+    font-family:'IBM Plex Mono',monospace;font-size:10px;padding:1px 6px;flex-shrink:0;
+  }
+  .beheer-nav button.active .telbol{background:var(--paper);color:var(--ink);}
+  .paneel-kop{margin-bottom:16px;}
+  .paneel-kop h2{font-family:'Archivo',sans-serif;font-weight:700;font-size:19px;margin:0 0 3px;letter-spacing:-.01em;}
+  .paneel-kop p{color:var(--muted);font-size:13px;margin:0;max-width:62ch;line-height:1.55;}
+  /* cijfers op het overzicht */
+  .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:22px;}
+  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 15px;}
+  .kpi .cijfer{font-family:'Archivo',sans-serif;font-weight:700;font-size:25px;line-height:1.1;letter-spacing:-.02em;}
+  .kpi .naam{color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:10px;
+             letter-spacing:.1em;text-transform:uppercase;margin-top:5px;}
+  .kpi.let{border-color:var(--accent);}
+  .kpi.let .cijfer{color:var(--accent);}
+  /* uitklapbaar blok in het productformulier */
+  .vak{border:1px solid var(--line);border-radius:12px;margin-bottom:10px;background:var(--surface);overflow:hidden;}
+  .vak > summary{
+    padding:12px 14px;font-size:13px;font-weight:600;cursor:pointer;list-style:none;
+    display:flex;align-items:center;gap:9px;
+  }
+  .vak > summary::-webkit-details-marker{display:none;}
+  .vak > summary::after{content:"⌄";margin-left:auto;color:var(--muted);font-size:15px;line-height:1;}
+  .vak[open] > summary::after{content:"⌃";}
+  .vak > summary:hover{background:var(--surface2);}
+  .vak-body{padding:0 14px 14px;}
+  .vak-body > .field-label:first-child{margin-top:0;}
+
   .admin-split{display:grid;grid-template-columns:1fr;gap:28px;align-items:start;}
   @media(min-width:1000px){.admin-split{grid-template-columns:minmax(0,390px) minmax(0,1fr);gap:36px;}}
   @media(min-width:1000px){.admin-split > div:first-child{position:sticky;top:86px;}}
@@ -1756,6 +1807,46 @@ function splitGeo(geo){
   // grootste eerst: dat is meestal het hoofdonderdeel
   out.sort((a, b) => b.volume - a.volume);
   return out.length > 1 ? out : null;
+}
+
+/* =====================================================================
+   Een los onderdeel als eigen bestand
+   Splits je een model, dan moet je later ook echt díe arm kunnen downloaden.
+   Daarom schrijven we per onderdeel een eigen binaire STL uit de driehoeken
+   van dat stuk. Vroeger bewaarden alle onderdelen het oorspronkelijke
+   bestand, en kreeg je bij het downloaden telkens het hele model terug.
+   ===================================================================== */
+function meshNaarStl(mesh, naam){
+  const n = mesh.length / 9;
+  const buf = new ArrayBuffer(84 + n * 50);
+  const dv = new DataView(buf);
+  // kop van 80 bytes: daar mag je in zetten wat je wil
+  const kop = new TextEncoder().encode(("Extrudo " + naam).slice(0, 79));
+  new Uint8Array(buf, 0, 80).set(kop);
+  dv.setUint32(80, n, true);
+  let at = 84;
+  for (let o = 0; o < mesh.length; o += 9){
+    // normaal: veel programma's negeren hem, maar hij hoort erbij
+    const ux = mesh[o+3]-mesh[o],   uy = mesh[o+4]-mesh[o+1], uz = mesh[o+5]-mesh[o+2];
+    const vx = mesh[o+6]-mesh[o],   vy = mesh[o+7]-mesh[o+1], vz = mesh[o+8]-mesh[o+2];
+    let nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    dv.setFloat32(at, nx/len, true); dv.setFloat32(at+4, ny/len, true); dv.setFloat32(at+8, nz/len, true);
+    for (let k = 0; k < 9; k++) dv.setFloat32(at + 12 + k*4, mesh[o+k], true);
+    dv.setUint16(at + 48, 0, true);
+    at += 50;
+  }
+  return new File([buf], naam.replace(/[^\w .-]+/g, "_") + ".stl", { type: "model/stl" });
+}
+
+/* Maakt van één gesplitst stuk een onderdeel met zijn eigen bestand. */
+function deelAlsBestand(geo, naam){
+  const mesh = geo.full || geo.mesh;
+  const file = meshNaarStl(mesh, naam);
+  // Hadden we alleen de uitgedunde versie, dan is dit bestand ook uitgedund.
+  // Dat mag je niet stilzwijgend laten printen, dus het onderdeel krijgt een
+  // merkteken dat in het beheer zichtbaar is.
+  return { file, vereenvoudigd: !geo.full };
 }
 
 /* Zoekt het ingeschakelde filament dat het dichtst bij een kleur ligt. */
@@ -3430,15 +3521,19 @@ window.__splitPart = (id) => {
   if (!part || !part.splittable) return;
   const pieces = part.splittable;
   const made = pieces.map((g, i) => {
-    const np = newPart(part.file);
+    const naam = `${part.name} ${i + 1}`;
+    // elk stuk krijgt zijn eigen bestand, anders download je straks het geheel
+    const { file, vereenvoudigd } = deelAlsBestand(g, naam);
+    const np = newPart(file);
     np.busy = false;
     np.geo = g;
-    np.name = `${part.name} ${i + 1}`;
+    np.name = naam;
     np.unit = part.unit; np.scale = part.scale;
     np.infill = part.infill; np.layer = part.layer;
     np.filamentId = part.filamentId;
     np.fromSplit = true;
-    bewaarBestand(np.id, part.file);
+    np.vereenvoudigd = vereenvoudigd;
+    bewaarBestand(np.id, file);
     return np;
   });
   const at = parts.indexOf(part);
@@ -3850,19 +3945,30 @@ async function analyseerWachtende(){
       const geos = await analyzeFile(part.file);
       part.geo = geos[0];
       applyGeoColor(part, geos[0]);
-      // een 3mf met meerdere objecten of platen valt meteen uiteen
+      // een 3mf met meerdere objecten of platen valt meteen uiteen; elk object
+      // krijgt zijn eigen bestand zodat je het later los kunt downloaden
       if (geos.length > 1){
         const extra = geos.slice(1).map((g, i) => {
-          const np = newPart(part.file);
+          const naam = g.label || `${part.name} ${i + 2}`;
+          const { file, vereenvoudigd } = deelAlsBestand(g, naam);
+          const np = newPart(file);
           np.busy = false;
           np.geo = g;
-          np.name = g.label || `${part.name} ${i + 2}`;
+          np.name = naam;
           np.fromSplit = true;
+          np.vereenvoudigd = vereenvoudigd;
           applyGeoColor(np, g);
-          bewaarBestand(np.id, part.file);
+          bewaarBestand(np.id, file);
           return np;
         });
-        part.name = geos[0].label || part.name + " 1";
+        const eersteNaam = geos[0].label || part.name + " 1";
+        const eerste = deelAlsBestand(geos[0], eersteNaam);
+        part.file = eerste.file;
+        part.fileName = eerste.file.name;
+        part.fileSize = eerste.file.size;
+        part.vereenvoudigd = eerste.vereenvoudigd;
+        bewaarBestand(part.id, eerste.file);
+        part.name = eersteNaam;
         part.fromSplit = true;
         const at = state.parts.indexOf(part);
         state.parts.splice(at + 1, 0, ...extra);
@@ -4098,6 +4204,7 @@ async function addJobToCart(btn){
         grams: est ? +est.grams.toFixed(1) : null,
         seconds: est ? Math.round(est.seconds) : null,
         unitPrice: est ? est.unit : null,
+        vereenvoudigd: !!part.vereenvoudigd,
       });
     }
 
@@ -4129,6 +4236,7 @@ async function addJobToCart(btn){
       jobParts: uploaded.map((u, i) => ({
         name: u.name, qty: u.qty, filament: u.filament,
         fileName: u.fileName, index: i, storage: u.storage, storageUrl: u.storageUrl,
+        vereenvoudigd: !!u.vereenvoudigd,
       })),
       assembled: !!state.assembled && t.assembly > 0,
     });
@@ -5017,6 +5125,7 @@ function viewAdmin(){
               <div class="row" style="gap:7px;font-size:12px;flex-wrap:wrap;margin-bottom:4px;">
                 ${j.filament ? `<span class="fil-chip ${finishClass(j.filament.finish)}" style="width:11px;height:11px;border-radius:3px;background-color:${esc(j.filament.hex)};flex-shrink:0;"></span>` : ``}
                 <span class="muted">${j.qty}× ${esc(j.name)}${j.filament ? ` — ${esc(j.filament.type)} ${esc(j.filament.name)}` : ``}</span>
+                ${j.vereenvoudigd ? `<span class="sale-flag" title="Dit stuk is uit een vereenvoudigd model gehaald — snij het zelf uit het origineel">VEREENVOUDIGD</span>` : ``}
                 ${jobFileButton(i, j)}
               </div>`).join("")}
             <div class="muted font-mono" style="font-size:10px;margin-top:3px;">
@@ -5033,10 +5142,23 @@ function viewAdmin(){
 
   // Wat nog werk vraagt bovenaan; afgeronde bestellingen zakken naar onder, en
   // wat je opgeruimd hebt is hier weg maar staat nog in het archief.
-  const zichtbaar = state.orders.filter(o => !o.hiddenForShop);
+  const zoek = (state.__ordZoek || "").trim().toLowerCase();
+  const status = state.__ordStatus || "alles";
+  // het overzicht rekent met alles wat openstaat, de lijst met wat je zoekt
+  const openstaand = state.orders.filter(o => !o.hiddenForShop);
+  const zichtbaar = openstaand
+    .filter(o => status === "alles" || o.status === status)
+    .filter(o => {
+      if (!zoek) return true;
+      const hooi = [o.userEmail, orderNumber(o), o.discountCode,
+        ...(o.items || []).map(i => i.name),
+        o.shippingAddress?.city, o.shippingAddress?.street].filter(Boolean).join(" ").toLowerCase();
+      return hooi.includes(zoek);
+    });
   const lopend = zichtbaar.filter(o => o.status !== "Geleverd");
   const klaar  = zichtbaar.filter(o => o.status === "Geleverd");
-  const weg = state.orders.length - zichtbaar.length;
+  const weg = state.orders.length - openstaand.length;
+  const gefilterd = openstaand.length - zichtbaar.length;
   const orderRows = `
     ${lopend.map(orderRow).join("")}
     ${klaar.length ? `
@@ -5048,31 +5170,71 @@ function viewAdmin(){
         ${klaar.filter(o => o.receivedAt).length} daarvan zijn door de klant zelf bevestigd.
       </p>
       ${klaar.map(orderRow).join("")}` : ``}
+    ${zichtbaar.length === 0 && openstaand.length ? `
+      <p class="muted" style="font-size:13px;">Niets gevonden met deze zoekopdracht.</p>` : ``}
     <p class="muted" style="font-size:12px;margin-top:16px;">
+      ${gefilterd ? `${gefilterd} verborgen door je filter. ` : ""}
       ${weg ? `${weg} bestelling${weg > 1 ? "en" : ""} opgeborgen. ` : ""}
       Alles blijft bewaard.
       <button class="btn btn-ghost btn-sm" onclick="go('archief')" style="margin-left:6px;">${ic("box-archive")} Naar het archief</button>
     </p>`;
+  const teDoen = openstaand.filter(o => o.status !== "Geleverd").length;
   return `
-    <div style="padding:32px 0;">
-      <h1 class="font-display" style="font-size:26px;">Shopbeheer</h1>
-      <p class="muted" style="font-size:13px;margin-bottom:20px;">Voeg producten toe en beheer bestellingen — live gedeeld met iedereen.</p>
-      <div class="tabs">
-        <button class="tab ${tab==='products'?'active':''}" onclick="window.__setAdminTab('products')">Producten</button>
-        <button class="tab ${tab==='orders'?'active':''}" onclick="window.__setAdminTab('orders')">Bestellingen (${state.orders.length})</button>
-        <button class="tab ${tab==='filaments'?'active':''}" onclick="window.__setAdminTab('filaments')">Filamenten</button>
-        <button class="tab ${tab==='pricing'?'active':''}" onclick="window.__setAdminTab('pricing')">Prijzen</button>
+    <div style="padding:28px 0;">
+      <div class="between" style="margin-bottom:18px;gap:12px;flex-wrap:wrap;">
+        <div>
+          <h1 class="font-display" style="font-size:25px;margin:0 0 2px;">Shopbeheer</h1>
+          <p class="muted" style="font-size:12px;margin:0;">Alles wat je hier wijzigt staat meteen live.</p>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="go('shop')">${ic("arrow-left")} Naar de winkel</button>
       </div>
+
+      <div class="beheer">
+        <nav class="beheer-nav">
+          ${BEHEER_ONDERDELEN.map(([k, naam, icoon]) => `
+            <button class="${tab===k?'active':''}" data-tab="${k}" onclick="window.__setAdminTab('${k}')">
+              ${ic(icoon)} <span>${naam}</span>
+              ${k === 'orders' && teDoen ? `<span class="telbol">${teDoen}</span>` : ``}
+            </button>`).join("")}
+        </nav>
+        <div>
+      <div id="adminOverzicht" class="${tab==='overzicht'?'':'hidden'}">${viewBeheerOverzicht(openstaand)}</div>
       <div id="adminFilaments" class="${tab==='filaments'?'':'hidden'}">${viewFilamentAdmin()}</div>
       <div id="adminPricing" class="${tab==='pricing'?'':'hidden'}">${viewPricingAdmin()}</div>
+      <div id="adminPickup" class="${tab==='pickup'?'':'hidden'}">${viewPickupAdmin()}</div>
+      <div id="adminCodes" class="${tab==='codes'?'':'hidden'}">${viewCodesAdmin()}</div>
+      <div id="adminMail" class="${tab==='mail'?'':'hidden'}">${viewMailAdmin()}</div>
       <div id="adminProducts" class="${tab==='products'?'':'hidden'}">
         <div class="admin-split">
           <div>
-            <div class="between" style="margin-bottom:10px;">
-              <h2 class="font-display" style="font-size:15px;margin:0;">${ed ? "Product bewerken" : "Nieuw product"}</h2>
+            <div class="between" style="margin-bottom:12px;">
+              <div>
+                <h2 class="font-display" style="font-size:17px;margin:0 0 2px;">${ed ? "Product bewerken" : "Nieuw product"}</h2>
+                <p class="muted" style="font-size:12px;margin:0;">${ed ? esc(ed.name) : "Naam en prijs volstaan; de rest is optioneel."}</p>
+              </div>
               ${ed ? `<button class="btn btn-ghost btn-sm" onclick="window.__cancelEdit()">Annuleren</button>` : ``}
             </div>
 
+            <label class="field-label">Naam</label>
+            <input id="pName" placeholder="Bijv. Plantenvaas — Spiraal" value="${esc(ed?.name || '')}" />
+
+            <div class="form-grid">
+              <div>
+                <label class="field-label">Prijs (€)</label>
+                <input id="pPrice" type="number" step="0.01" min="0" placeholder="18.00" value="${ed?.price ?? ''}" />
+              </div>
+              <div>
+                <label class="field-label">Voorraad</label>
+                <input id="pStock" type="number" min="0" placeholder="10" value="${ed?.stock ?? 10}" />
+              </div>
+            </div>
+
+            <label class="field-label">Beschrijving</label>
+            <textarea id="pDesc" rows="3" placeholder="Waar is het voor, hoe is het geprint, waarom is het leuk?">${esc(ed?.description || '')}</textarea>
+
+            <details class="vak" open>
+              <summary>${ic("image")} Beeld</summary>
+              <div class="vak-body">
             <label class="field-label">Afbeeldingen (max ${MAX_PRODUCT_IMAGES})</label>
             <div class="img-tray" id="imgTray"></div>
             <input type="file" id="pImgFile" accept="image/*" multiple style="display:none;" />
@@ -5103,23 +5265,18 @@ function viewAdmin(){
               </div>
             </div>
 
-            <label class="field-label">Naam</label>
-            <input id="pName" placeholder="Bijv. Plantenvaas — Spiraal" value="${esc(ed?.name || '')}" />
+              </div>
+            </details>
 
-            ${slotAdminBlock(ed)}
+            <details class="vak"${(state.__draftSlots || []).length ? " open" : ""}>
+              <summary>${ic("palette")} Kleuren per onderdeel${(state.__draftSlots || []).length ? ` <span class="badge">${(state.__draftSlots || []).length}</span>` : ""}</summary>
+              <div class="vak-body">${slotAdminBlock(ed)}</div>
+            </details>
 
-            <label class="field-label">Beschrijving</label>
-            <textarea id="pDesc" rows="3" placeholder="Waar is het voor, hoe is het geprint, waarom is het leuk?">${esc(ed?.description || '')}</textarea>
-
+            <details class="vak"${(ed?.discountPct ? " open" : "")}>
+              <summary>${ic("tag")} Korting${ed?.discountPct ? ` <span class="sale-flag">&minus;${ed.discountPct}%</span>` : ""}</summary>
+              <div class="vak-body">
             <div class="form-grid">
-              <div>
-                <label class="field-label">Prijs (€)</label>
-                <input id="pPrice" type="number" step="0.01" min="0" placeholder="18.00" value="${ed?.price ?? ''}" />
-              </div>
-              <div>
-                <label class="field-label">Voorraad</label>
-                <input id="pStock" type="number" min="0" placeholder="10" value="${ed?.stock ?? 10}" />
-              </div>
               <div>
                 <label class="field-label">Korting (%)</label>
                 <input id="pDiscount" type="number" min="0" max="90" step="1" placeholder="0" value="${ed?.discountPct ?? 0}" />
@@ -5128,6 +5285,14 @@ function viewAdmin(){
                 <label class="field-label">Korting loopt tot</label>
                 <input id="pDiscountUntil" type="date" value="${ed?.discountUntil ? new Date(ed.discountUntil).toISOString().slice(0,10) : ''}" />
               </div>
+            </div>
+              </div>
+            </details>
+
+            <details class="vak"${["category","color","material","infill","layerHeight","dimensions","printTime"].some(k => ed?.[k]) || ed?.weight ? " open" : ""}>
+              <summary>${ic("circle-info")} Details in de winkel</summary>
+              <div class="vak-body">
+            <div class="form-grid">
               <div>
                 <label class="field-label">Categorie</label>
                 <input id="pCategory" placeholder="Wonen, Bureau, …" value="${esc(ed?.category || '')}" />
@@ -5163,7 +5328,12 @@ function viewAdmin(){
                 <input id="pWeight" type="number" min="0" placeholder="48" value="${ed?.weight ?? ''}" />
               </div>
             </div>
+              </div>
+            </details>
 
+            <details class="vak"${ed?.sizing?.enabled ? " open" : ""}>
+              <summary>${ic("ruler-combined")} Op maat${ed?.sizing?.enabled ? ` <span class="badge badge-accent">aan</span>` : ""}</summary>
+              <div class="vak-body">
             <label class="checkbox-row"><input type="checkbox" id="pSizing" style="width:auto;margin:0;" ${ed?.sizing?.enabled ? 'checked' : ''} /> Klant kiest zelf de afmetingen</label>
             <div id="sizingFields" class="${ed?.sizing?.enabled ? '' : 'hidden'}" style="background:var(--surface2);border-radius:10px;padding:12px;margin-bottom:12px;">
               <p class="muted" style="font-size:11px;margin:0 0 10px;">De prijs wordt dan berekend uit volume en printtijd. Het vaste prijsveld hierboven vervalt.</p>
@@ -5189,9 +5359,14 @@ function viewAdmin(){
               <p class="muted" style="font-size:11px;margin:0;">Massiefheid is hoeveel van de omhullende doos daadwerkelijk materiaal is. Een hol doosje zit rond 20%, een massief figuurtje op 100%.</p>
             </div>
 
-            <label class="field-label">Beschikbare filamenttypes</label>
-            <p class="muted" style="font-size:11px;margin:-2px 0 8px;">Niets aanvinken = alle ingeschakelde filamenten.</p>
-            <div style="margin-bottom:12px;">
+              </div>
+            </details>
+
+            <details class="vak"${(ed?.filamentTypes || []).length ? " open" : ""}>
+              <summary>${ic("filter")} Toegestane filamenten${(ed?.filamentTypes || []).length ? ` <span class="badge">${ed.filamentTypes.length}</span>` : ""}</summary>
+              <div class="vak-body">
+            <p class="muted" style="font-size:11px;margin:0 0 8px;">Niets aanvinken = alle ingeschakelde filamenten.</p>
+            <div style="margin-bottom:4px;">
               ${filamentTypes(state.filaments || []).map(t=>`
                 <label class="checkbox-row">
                   <input type="checkbox" class="ptype" value="${esc(t)}" style="width:auto;margin:0;"
@@ -5199,20 +5374,120 @@ function viewAdmin(){
                 </label>`).join("") || `<p class="muted" style="font-size:12px;">Nog geen filamenten geladen.</p>`}
             </div>
 
-            <label class="checkbox-row"><input type="checkbox" id="pFeatured" style="width:auto;margin:0;" ${ed?.featured ? 'checked' : ''} /> Uitlichten in de collectie</label>
+              </div>
+            </details>
+
+            <label class="checkbox-row" style="margin-top:6px;"><input type="checkbox" id="pFeatured" style="width:auto;margin:0;" ${ed?.featured ? 'checked' : ''} /> Uitlichten in de collectie</label>
 
             <button class="btn btn-accent" id="addProductBtn" style="width:100%;">${ed ? "Wijzigingen opslaan" : "Product toevoegen"}</button>
           </div>
           <div>
-            <h2 class="font-display" style="font-size:15px;margin-bottom:10px;">Huidige producten (${state.products.length})</h2>
+            <h2 class="font-display" style="font-size:17px;margin:0 0 2px;">In de collectie</h2>
+            <p class="muted" style="font-size:12px;margin:0 0 12px;">${state.products.length} product${state.products.length === 1 ? "" : "en"}</p>
             ${productRows || `<p class="muted" style="font-size:13px;">Nog geen producten.</p>`}
           </div>
         </div>
       </div>
       <div id="adminOrders" class="${tab==='orders'?'':'hidden'}">
+        <div class="paneel-kop">
+          <h2>Bestellingen</h2>
+          <p>Wat nog werk vraagt staat bovenaan. Zet de status door zodra je verder bent —
+             de klant krijgt er vanzelf bericht van.</p>
+        </div>
+        <div class="row" style="gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+          <input id="ordZoek" placeholder="Zoek op naam, nummer of product…"
+                 value="${esc(state.__ordZoek || "")}" style="margin:0;flex:1;min-width:190px;" />
+          <select class="field" id="ordStatus" style="margin:0;width:auto;">
+            ${["alles", ...ORDER_STEPS].map(x => `<option${x === (state.__ordStatus || "alles") ? " selected" : ""}>${esc(x === "alles" ? "Alle statussen" : x)}</option>`).join("")}
+          </select>
+        </div>
         ${state.orders.length ? orderRows : `<p class="muted" style="font-size:13px;">Nog geen bestellingen.</p>`}
       </div>
+        </div>
+      </div>
     </div>`;
+}
+
+/* De onderdelen van het beheer, in de volgorde waarin je ze nodig hebt. */
+const BEHEER_ONDERDELEN = [
+  ["overzicht", "Overzicht",     "gauge-high"],
+  ["orders",    "Bestellingen",  "receipt"],
+  ["products",  "Producten",     "cube"],
+  ["filaments", "Filamenten",    "palette"],
+  ["pricing",   "Prijzen",       "euro-sign"],
+  ["pickup",    "Afhalen",       "shop"],
+  ["codes",     "Kortingscodes", "ticket"],
+  ["mail",      "E-mail",        "envelope"],
+];
+
+/* Het eerste scherm: in één oogopslag wat er te doen is. */
+function viewBeheerOverzicht(openstaand){
+  const lopend = openstaand.filter(o => o.status !== "Geleverd");
+  const klaar = openstaand.filter(o => o.status === "Geleverd");
+  const nieuw = lopend.filter(o => o.status === "In verwerking").length;
+  const printen = lopend.filter(o => o.status === "Wordt geprint").length;
+  const onderweg = lopend.filter(o => o.status === "Verzonden").length;
+  const teHalen = state.orders.filter(o => o.pickupAt && o.status !== "Geleverd").length;
+  const maand = Date.now() - 30 * 864e5;
+  const omzet = state.orders.filter(o => o.createdAt > maand).reduce((s, o) => s + (o.total || 0), 0);
+  const opRaken = (state.products || []).filter(p => !sizingOf(p) && (p.stock ?? 0) > 0 && (p.stock ?? 0) <= 3);
+  const uitverkocht = (state.products || []).filter(p => !sizingOf(p) && (p.stock ?? 0) <= 0);
+  const kaart = (cijfer, naam, let_) => `
+    <div class="kpi${let_ ? " let" : ""}"><div class="cijfer">${cijfer}</div><div class="naam">${esc(naam)}</div></div>`;
+  return `
+    <div class="paneel-kop">
+      <h2>Overzicht</h2>
+      <p>Waar je vandaag aan toe bent.</p>
+    </div>
+    <div class="kpi-grid">
+      ${kaart(nieuw, "nieuw binnen", nieuw > 0)}
+      ${kaart(printen, "aan het printen")}
+      ${kaart(onderweg, "onderweg")}
+      ${teHalen ? kaart(teHalen, "wordt afgehaald") : ""}
+      ${kaart(fmtEUR(omzet), "laatste 30 dagen")}
+    </div>
+
+    ${nieuw ? `
+      <div class="cart-item" style="border-color:var(--accent);margin-bottom:12px;">
+        <p style="font-size:13px;font-weight:600;margin:0 0 4px;color:var(--accent);">
+          ${ic("bell")} ${nieuw} bestelling${nieuw > 1 ? "en" : ""} wacht${nieuw > 1 ? "en" : ""} op je
+        </p>
+        <p class="muted" style="font-size:12px;margin:0 0 10px;">Zet ze op <em>Wordt geprint</em> zodra je begint.</p>
+        <button class="btn btn-accent btn-sm" onclick="window.__setAdminTab('orders')">Naar de bestellingen</button>
+      </div>` : `
+      <div class="cart-item" style="margin-bottom:12px;">
+        <p style="font-size:13px;margin:0;">${ic("circle-check")} Niets dat op je wacht.</p>
+      </div>`}
+
+    ${(opRaken.length || uitverkocht.length) ? `
+      <div class="cart-item" style="margin-bottom:12px;">
+        <p style="font-size:13px;font-weight:600;margin:0 0 6px;">${ic("boxes-stacked")} Voorraad</p>
+        ${uitverkocht.map(p => `<p style="font-size:13px;margin:0 0 3px;">
+          <span class="stock-dot" style="background:var(--muted);"></span>${esc(p.name)} — uitverkocht</p>`).join("")}
+        ${opRaken.map(p => `<p style="font-size:13px;margin:0 0 3px;">
+          <span class="stock-dot" style="background:var(--accent);"></span>${esc(p.name)} — nog ${p.stock}</p>`).join("")}
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="window.__setAdminTab('products')">Voorraad bijwerken</button>
+      </div>` : ``}
+
+    <div class="cart-item">
+      <p style="font-size:13px;font-weight:600;margin:0 0 6px;">${ic("list-check")} Staat alles klaar?</p>
+      ${[
+        [(state.products || []).length > 0, "Er staan producten in de collectie", "products"],
+        [(state.filaments || []).some(f => f.enabled), "Er zijn filamenten ingeschakeld", "filaments"],
+        [!!(mailSettings().serviceId && mailSettings().publicKey), "E-mail is ingesteld", "mail"],
+        [afhalen().enabled, "Afhalen staat aan (mag ook uit blijven)", "pickup"],
+      ].map(([ok, tekst, waar]) => `
+        <p style="font-size:13px;margin:0 0 4px;display:flex;align-items:center;gap:8px;">
+          <span style="color:${ok ? "var(--accent)" : "var(--muted)"};">${ic(ok ? "circle-check" : "circle")}</span>
+          <span style="${ok ? "" : "color:var(--muted);"}">${esc(tekst)}</span>
+          ${ok ? "" : `<button class="detail-toggle" style="margin:0 0 0 auto;" onclick="window.__setAdminTab('${waar}')">regel dit</button>`}
+        </p>`).join("")}
+    </div>
+
+    <p class="muted" style="font-size:12px;margin-top:14px;">
+      ${klaar.length} afgehandeld · alles blijft bewaard
+      <button class="btn btn-ghost btn-sm" style="margin-left:6px;" onclick="go('archief')">${ic("box-archive")} Archief</button>
+    </p>`;
 }
 /* --------------------------- beheer: filamenten --------------------------- */
 function viewFilamentAdmin(){
@@ -5477,14 +5752,48 @@ function mailAdminBlock(){
     </div>`;
 }
 
+/* Elk onderdeel van het beheer heeft zijn eigen scherm met een eigen
+   opslaanknop. Vroeger hing alles onder Prijzen: e-mail, afhalen en codes
+   erbij, met één knop onderaan die je makkelijk over het hoofd zag. */
+function viewMailAdmin(){
+  return `
+    <div class="paneel-kop">
+      <h2>E-mail</h2>
+      <p>Bevestiging na een bestelling, bericht bij verzenden en bij leveren, en een
+         seintje naar jezelf. Vul je niets in, dan verstuurt de shop gewoon niets.</p>
+    </div>
+    ${mailAdminBlock()}
+    <button class="btn btn-accent" id="saveMailBtn" style="width:100%;">E-mailinstellingen opslaan</button>`;
+}
+function viewPickupAdmin(){
+  return `
+    <div class="paneel-kop">
+      <h2>Afhalen</h2>
+      <p>Laat de klant kiezen om zelf te komen halen. Hij kiest een moment uit de uren
+         die je hier opgeeft; verzendkosten vallen dan weg.</p>
+    </div>
+    ${afhaalAdminBlock()}
+    <button class="btn btn-accent" id="savePickupBtn" style="width:100%;">Afhaalinstellingen opslaan</button>`;
+}
+function viewCodesAdmin(){
+  return `
+    <div class="paneel-kop">
+      <h2>Kortingscodes</h2>
+      <p>De klant typt de code bij het afrekenen. Een code werkt meteen na het aanmaken;
+         opslaan hoeft hier niet.</p>
+    </div>
+    ${codeAdminBlock()}`;
+}
+
 function viewPricingAdmin(){
   const p = pricing();
   const sl = slicerSettings();
   return `
-    <p class="muted" style="font-size:13px;margin-bottom:16px;max-width:60ch;">
-      Hiermee reken je elke prijs door: die van een model op maat en die van een geüpload bestand.
-      De prijs per kilo staat per filamentsoort onder het tabblad Filamenten.
-    </p>
+    <div class="paneel-kop">
+      <h2>Prijzen</h2>
+      <p>Hiermee reken je elke prijs door: die van een model op maat en die van een geüpload
+         bestand. De prijs per kilo staat per filamentsoort onder Filamenten.</p>
+    </div>
     <div class="cart-item" style="margin-bottom:14px;">
       <div class="form-grid">
         ${PRICING_FIELDS.map(([k,label,step])=>`
@@ -5525,10 +5834,6 @@ function viewPricingAdmin(){
           <span class="muted" style="font-size:12px;">%</span>
         </div>`).join("")}
     </div>
-
-    ${mailAdminBlock()}
-    ${afhaalAdminBlock()}
-    ${codeAdminBlock()}
 
     <button class="btn btn-accent" id="savePricingBtn" style="width:100%;">Prijzen opslaan</button>
     <button class="btn btn-ghost btn-sm" id="resetPricingBtn" style="width:100%;margin-top:8px;justify-content:center;">Terug naar de standaardwaarden</button>`;
@@ -5741,20 +6046,6 @@ function attachPricingHandlers(){
       if (isFinite(v) && v > 0) slicer[el.dataset.key] = v;
     });
     out.slicer = slicer;
-    try{ await saveMail(mailUit()); }catch(e){ notify("E-mailinstellingen niet bewaard: " + e.message); }
-    if (state.__draftPickup){
-      const p = state.__draftPickup;
-      try{
-        await savePickup({
-          enabled: !!p.enabled, address: p.address || "", note: p.note || "",
-          slotMinutes: Math.max(10, p.slotMinutes || 30),
-          leadHours: Math.max(0, p.leadHours ?? 24),
-          weeks: Math.min(8, Math.max(1, p.weeks || 2)),
-          days: (p.days || []).map(d => ({ day: +d.day || 1, from: d.from || "17:00", to: d.to || "20:00" })),
-        });
-        state.__draftPickup = null;
-      }catch(e){ notify("Afhaalinstellingen niet bewaard: " + e.message); }
-    }
     const tiers = (out.discountTiers || []).map(t => ({ ...t }));
     document.querySelectorAll('.tierfield').forEach(el=>{
       const i = parseInt(el.dataset.i,10);
@@ -5765,6 +6056,32 @@ function attachPricingHandlers(){
     save.disabled = true;
     try{ await savePricing(out); notify("Prijzen opgeslagen"); }
     catch(err){ notify("Opslaan mislukt: " + err.message); save.disabled = false; }
+  };
+
+  // e-mail en afhalen hebben elk hun eigen knop
+  const mailSave = document.getElementById('saveMailBtn');
+  if (mailSave) mailSave.onclick = async () => {
+    mailSave.disabled = true;
+    try{ await saveMail(mailUit()); notify("E-mailinstellingen opgeslagen"); }
+    catch(e){ notify("Opslaan mislukt: " + e.message); }
+    mailSave.disabled = false;
+  };
+  const puSave = document.getElementById('savePickupBtn');
+  if (puSave) puSave.onclick = async () => {
+    const p = state.__draftPickup || afhalen();
+    puSave.disabled = true;
+    try{
+      await savePickup({
+        enabled: !!p.enabled, address: p.address || "", note: p.note || "",
+        slotMinutes: Math.max(10, p.slotMinutes || 30),
+        leadHours: Math.max(0, p.leadHours ?? 24),
+        weeks: Math.min(8, Math.max(1, p.weeks || 2)),
+        days: (p.days || []).map(d => ({ day: +d.day || 1, from: d.from || "17:00", to: d.to || "20:00" })),
+      });
+      state.__draftPickup = null;
+      notify("Afhaalinstellingen opgeslagen");
+    }catch(e){ notify("Opslaan mislukt: " + e.message); }
+    puSave.disabled = false;
   };
 
   const reset = document.getElementById('resetPricingBtn');
@@ -5827,6 +6144,23 @@ function sizingFromForm(){
 }
 
 function attachAdminHandlers(){
+  // zoeken en filteren in de bestellingen
+  const oz = document.getElementById('ordZoek');
+  if (oz) oz.oninput = () => {
+    state.__ordZoek = oz.value;
+    clearTimeout(state.__ordTimer);
+    state.__ordTimer = setTimeout(() => {
+      render();
+      const el = document.getElementById('ordZoek');
+      if (el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    }, 260);
+  };
+  const os = document.getElementById('ordStatus');
+  if (os) os.onchange = () => {
+    state.__ordStatus = os.value === "Alle statussen" ? "alles" : os.value;
+    render();
+  };
+
   const ruim = document.getElementById('ruimOpBtn');
   if (ruim) ruim.onclick = async () => {
     const klaar = state.orders.filter(o => o.status === "Geleverd" && !o.hiddenForShop);
