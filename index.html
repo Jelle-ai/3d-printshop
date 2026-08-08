@@ -349,6 +349,9 @@
   .job-layout{display:grid;grid-template-columns:1fr;gap:24px;align-items:start;}
   @media(min-width:960px){.job-layout{grid-template-columns:minmax(0,1fr) 330px;gap:32px;}}
   .part-card{margin-bottom:14px;}
+  /* voortgang van het snijden; het rekenen gebeurt in een aparte draad */
+  .snijbalk{height:4px;border-radius:999px;background:var(--surface2);overflow:hidden;margin:0 0 2px;}
+  .snijbalk > span{display:block;height:100%;background:var(--accent);border-radius:999px;transition:width .2s linear;}
   .part-name{font-size:15px;font-weight:600;margin:0;padding:9px 11px;}
   .part-body{display:grid;grid-template-columns:1fr;gap:18px;}
   @media(min-width:640px){.part-body{grid-template-columns:minmax(0,260px) minmax(0,1fr);gap:24px;}}
@@ -1092,8 +1095,200 @@ function toonTechniek(){ return !!state.profile?.isAdmin; }
    boven- en onderkant zijn de vlakken waar het model begint of ophoudt, en wat
    overblijft krijgt het vulpercentage van de klant.
    ===================================================================== */
-function sliceMesh(mesh, { layerHeight, infill, scale = 1 }){
-  const s = slicerSettings();
+const PREVIEW_TRIANGLES = 40000;   // lichte versie, alleen tijdens het slepen
+// Zoveel driehoeken houden we volledig bij. Dat mag ruim, want het snijwerk
+// gebeurt naast het scherm: een binaire STL van 50 MB is precies een miljoen
+// driehoeken, en die gaat er dus gewoon nog door. Daarboven bewaren we alleen
+// een steekproef — daar kun je een vorm van tonen, maar niet op rekenen.
+const FULL_MESH_LIMIT   = 1500000;
+
+/* Deze bron staat één keer in de site en wordt op twee plekken gebruikt: in
+   een Worker (een tweede draad naast het scherm) en, als die er niet is, op de
+   pagina zelf. Zo kunnen de twee nooit uit elkaar lopen. */
+const SLICER_SRC = `
+const GRID = 56;
+function findComponents(geo){
+  const mesh = geo.full || geo.mesh;
+  if (!mesh || mesh.length < 18) return null;
+  const [sx, sy, sz] = geo.size;
+  const span = Math.max(sx, sy, sz) || 1;
+  const cell = span / GRID;
+  const nx = Math.max(1, Math.ceil(sx / cell) + 1);
+  const ny = Math.max(1, Math.ceil(sy / cell) + 1);
+  const nz = Math.max(1, Math.ceil(sz / cell) + 1);
+  if (nx * ny * nz > 4_000_000) return null;
+
+  const ox = geo.center[0] - sx/2, oy = geo.center[1] - sy/2, oz = geo.minZ;
+  const occupied = new Uint8Array(nx * ny * nz);
+  const at = (x,y,z) => (z * ny + y) * nx + x;
+  const cellOf = (x,y,z) => [
+    Math.min(nx-1, Math.max(0, Math.floor((x - ox) / cell))),
+    Math.min(ny-1, Math.max(0, Math.floor((y - oy) / cell))),
+    Math.min(nz-1, Math.max(0, Math.floor((z - oz) / cell))),
+  ];
+
+  // Een driehoek moet het rooster echt vullen. Alleen de hoekpunten markeren
+  // laat gaten zodra een vlak groter is dan een vakje, en dan valt één
+  // voorwerp uiteen in tientallen losse stukjes.
+  // Weinig driehoeken betekent grote vlakken, en die hebben veel monsters
+  // nodig. Een fijne mesh heeft ze niet: daar past een driehoek al in één
+  // vakje. Het budget vangt de zeldzame gevallen af waarin beide samenvallen.
+  const nTri = mesh.length / 9;
+  const cap = nTri <= 50000 ? 384 : nTri <= 200000 ? 32 : 8;
+  let budget = 8_000_000;
+  for (let o = 0; o < mesh.length; o += 9){
+    const ax=mesh[o],   ay=mesh[o+1], az=mesh[o+2];
+    const bx=mesh[o+3], by=mesh[o+4], bz=mesh[o+5];
+    const cx=mesh[o+6], cy=mesh[o+7], cz=mesh[o+8];
+    const longest = Math.max(
+      Math.hypot(bx-ax, by-ay, bz-az),
+      Math.hypot(cx-bx, cy-by, cz-bz),
+      Math.hypot(ax-cx, ay-cy, az-cz));
+    // Weinig grote driehoeken hebben een fijne verdeling nodig; bij een fijne
+    // mesh zijn ze al kleiner dan een vakje en volstaat één monster.
+    const steps = Math.min(cap, Math.max(1, Math.ceil(longest / (cell * 0.5))));
+    budget -= (steps + 1) * (steps + 2) / 2;
+    if (budget < 0) return null;                 // te zwaar: liever niets beweren
+    for (let i = 0; i <= steps; i++){
+      for (let j = 0; j <= steps - i; j++){
+        const u = i / steps, v = j / steps, w = 1 - u - v;
+        const [gx, gy, gz] = cellOf(
+          ax*w + bx*u + cx*v,
+          ay*w + by*u + cy*v,
+          az*w + bz*u + cz*v);
+        occupied[at(gx,gy,gz)] = 1;
+      }
+    }
+  }
+
+  const comp = new Int32Array(occupied.length).fill(-1);
+  let groups = 0;
+  const stack = [];
+  for (let i = 0; i < occupied.length; i++){
+    if (!occupied[i] || comp[i] >= 0) continue;
+    const id = groups++;
+    stack.length = 0; stack.push(i); comp[i] = id;
+    while (stack.length){
+      const c = stack.pop();
+      const x = c % nx, y = ((c - x) / nx) % ny, z = Math.floor(c / (nx * ny));
+      for (const [dx,dy,dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]){
+        const X = x+dx, Y = y+dy, Z = z+dz;
+        if (X<0||Y<0||Z<0||X>=nx||Y>=ny||Z>=nz) continue;
+        const j = at(X,Y,Z);
+        if (occupied[j] && comp[j] < 0){ comp[j] = id; stack.push(j); }
+      }
+    }
+  }
+  if (groups <= 1) return null;
+  return { comp, cellOf, at, groups };
+}
+
+function splitGeo(geo){
+  const info = findComponents(geo);
+  if (!info) return null;
+  const mesh = geo.full || geo.mesh;
+  const buckets = Array.from({ length: info.groups }, () => []);
+  for (let o = 0; o < mesh.length; o += 9){
+    const [gx, gy, gz] = info.cellOf(
+      (mesh[o]+mesh[o+3]+mesh[o+6])/3,
+      (mesh[o+1]+mesh[o+4]+mesh[o+7])/3,
+      (mesh[o+2]+mesh[o+5]+mesh[o+8])/3);
+    const id = info.comp[info.at(gx,gy,gz)];
+    if (id >= 0) buckets[id].push(o);
+  }
+  const out = [];
+  for (const idxs of buckets){
+    if (idxs.length < 4) continue;                  // rommel overslaan
+    const m = new Float32Array(idxs.length * 9);
+    idxs.forEach((o, i) => m.set(mesh.subarray(o, o + 9), i * 9));
+    out.push(geoFromMesh(m, { colorHex: geo.colorHex }));
+  }
+  // grootste eerst: dat is meestal het hoofdonderdeel
+  out.sort((a, b) => b.volume - a.volume);
+  return out.length > 1 ? out : null;
+}
+
+let LIMIETEN = { full: 1500000, preview: 40000 };
+
+function geoFromMesh(mesh, opts){
+  let vol6 = 0, area2 = 0;
+  const min = [Infinity,Infinity,Infinity], max = [-Infinity,-Infinity,-Infinity];
+  for (let o = 0; o < mesh.length; o += 9){
+    const ax=mesh[o],   ay=mesh[o+1], az=mesh[o+2];
+    const bx=mesh[o+3], by=mesh[o+4], bz=mesh[o+5];
+    const cx=mesh[o+6], cy=mesh[o+7], cz=mesh[o+8];
+    vol6 += ax*(by*cz - bz*cy) - ay*(bx*cz - bz*cx) + az*(bx*cy - by*cx);
+    const ux=bx-ax, uy=by-ay, uz=bz-az, vx=cx-ax, vy=cy-ay, vz=cz-az;
+    area2 += Math.hypot(uy*vz - uz*vy, uz*vx - ux*vz, ux*vy - uy*vx);
+    for (let k = 0; k < 3; k++){
+      const p = [ [ax,ay,az], [bx,by,bz], [cx,cy,cz] ][k];
+      for (let d = 0; d < 3; d++){
+        if (p[d] < min[d]) min[d] = p[d];
+        if (p[d] > max[d]) max[d] = p[d];
+      }
+    }
+  }
+  return {
+    triangles: (opts?.triangles) ?? mesh.length / 9,
+    volume: Math.abs(vol6) / 6,
+    surface: area2 / 2,
+    size: [max[0]-min[0], max[1]-min[1], max[2]-min[2]],
+    center: [(min[0]+max[0])/2, (min[1]+max[1])/2, (min[2]+max[2])/2],
+    minZ: min[2],
+    mesh: sampleMesh(mesh),
+    full: mesh.length / 9 <= LIMIETEN.full ? mesh : null,
+    // Van een te zwaar bestand houden we maar een deel van de driehoeken over.
+    // Daar kun je wel een vorm van tonen, maar niet betrouwbaar op snijden.
+    decimated: ((opts?.triangles) ?? mesh.length / 9) > mesh.length / 9,
+    colorHex: opts?.colorHex || null,
+    label: opts?.label || null,
+  };
+}
+
+function sampleMesh(mesh){
+  const n = mesh.length / 9;
+  if (n <= LIMIETEN.preview) return mesh;
+  const step = Math.ceil(n / LIMIETEN.preview);
+  const out = new Float32Array(Math.ceil(n / step) * 9);
+  let w = 0;
+  for (let i = 0; i < n; i += step){
+    out.set(mesh.subarray(i * 9, i * 9 + 9), w);
+    w += 9;
+  }
+  return out.subarray(0, w);
+}
+
+function parseStl(buffer){
+  const view = new DataView(buffer);
+  const looksBinary = buffer.byteLength >= 84 &&
+    view.getUint32(80, true) * 50 + 84 === buffer.byteLength;
+
+  if (looksBinary){
+    const n = view.getUint32(80, true);
+    if (!n) return null;
+    const keep = Math.min(n, LIMIETEN.full);
+    const step = Math.max(1, Math.ceil(n / keep));
+    const mesh = new Float32Array(Math.ceil(n / step) * 9);
+    let w = 0;
+    for (let i = 0; i < n; i += step){
+      const o = 84 + i * 50 + 12;                 // normaalvector overslaan
+      for (let k = 0; k < 9; k++) mesh[w + k] = view.getFloat32(o + k * 4, true);
+      w += 9;
+    }
+    return geoFromMesh(mesh.subarray(0, w), { triangles: n });
+  }
+
+  const text = new TextDecoder().decode(new Uint8Array(buffer));
+  const re = /vertex\s+(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)/g;
+  const vals = [];
+  let m;
+  while ((m = re.exec(text))) vals.push(+m[1], +m[2], +m[3]);
+  if (vals.length < 9) return null;
+  return geoFromMesh(new Float32Array(vals));
+}
+
+function sliceMesh(mesh, { layerHeight, infill, scale = 1, settings }){
+  const s = settings;
   const h = Math.max(0.04, layerHeight || 0.2);
   const w = Math.max(0.1, s.lineWidth);
   const nTri = mesh.length / 9;
@@ -1129,7 +1324,9 @@ function sliceMesh(mesh, { layerHeight, infill, scale = 1 }){
   const toon = [];
   const TOON_MAX = 24000;
 
+  const meld = typeof onVoortgang === "function" ? onVoortgang : null;
   for (let L = 0; L < lagen; L++){
+    if (meld && (L & 63) === 0) meld(L, lagen);
     const z = minZ + (L + 0.5) * (hoogte / lagen);   // midden van de laag
     while (volgende < nTri && zLo[sorted[volgende]] <= z) actief.push(sorted[volgende++]);
 
@@ -1187,8 +1384,8 @@ function sliceMesh(mesh, { layerHeight, infill, scale = 1 }){
   const dichtheid = Math.min(100, Math.max(0, infill)) / 100;
 
   // Waar het model begint of ophoudt komt een massief vlak. Dat vlak ligt niet
-  // in één laag maar over een paar lagen: een dak is `topShells` dik, een
-  // bodem `bottomShells`. Daarom smeren we het over die lagen uit.
+  // in één laag maar over een paar lagen: een dak is 'topShells' dik, een
+  // bodem 'bottomShells'. Daarom smeren we het over die lagen uit.
   const massiefIn = new Float64Array(lagen);
   for (let L = 0; L < lagen; L++){
     const A = areas[L];
@@ -1212,7 +1409,7 @@ function sliceMesh(mesh, { layerHeight, infill, scale = 1 }){
     if (2 * opgang <= lengte) return 2 * (v / accel) + (lengte - 2 * opgang) / v;
     return 2 * Math.sqrt(lengte / accel);        // te kort: alleen op- en afgaan
   }
-  /* Tijd voor een hoeveelheid baanlengte die in stukken van `stuk` gereden
+  /* Tijd voor een hoeveelheid baanlengte die in stukken van 'stuk' gereden
      wordt. Elk stuk moet opnieuw op snelheid komen. */
   function tijdVoor(totaal, stuk, doel, accel){
     if (!(totaal > 0) || !(stuk > 0)) return 0;
@@ -1268,6 +1465,163 @@ function sliceMesh(mesh, { layerHeight, infill, scale = 1 }){
     volume, seconds: seconden, layers: lagen, height: hoogte,
     lines: new Float32Array(toon), shownLayers: Math.ceil(lagen / toonStap),
   };
+}
+
+`;
+
+/* =====================================================================
+   Snijden naast het scherm
+   Het snijwerk is het zwaarste wat de site doet. Deed de pagina dat zelf, dan
+   stond alles stil zolang hij rekende: knoppen reageerden niet en op een
+   telefoon dacht de browser soms dat de site vastgelopen was. Daarom gebeurt
+   het nu in Workers — losse draden naast het scherm. Je kunt ondertussen
+   gewoon scrollen, kleuren kiezen en een tweede bestand toevoegen, en er
+   lopen er zoveel naast elkaar als je toestel kernen heeft.
+
+   Elke Worker onthoudt de modellen die hij al gekregen heeft. Verander je
+   alleen de laaghoogte of de vulling, dan hoeft het model er niet nog eens
+   naartoe.
+   ===================================================================== */
+const WERKER_SRC = SLICER_SRC + `
+const modellen = new Map();
+let bezigId = null;
+function onVoortgang(laag, lagen){
+  if (bezigId !== null) postMessage({ type: "voortgang", id: bezigId, laag, lagen });
+}
+onmessage = (e) => {
+  const m = e.data;
+  if (m.cmd === "grenzen"){ LIMIETEN = m.limieten; return; }
+  if (m.cmd === "laad"){ modellen.set(m.sleutel, new Float32Array(m.mesh)); return; }
+  if (m.cmd === "leesStl"){
+    try{
+      const geo = parseStl(m.buffer);
+      if (!geo){ postMessage({ type: "gelezen", id: m.id, fout: "geen bruikbare vorm gevonden" }); return; }
+      // Het model blijft hier staan, dan hoeft het straks niet opnieuw heen.
+      // Een kopie: het origineel gaat zo de deur uit en is hier daarna leeg.
+      if (m.sleutel && geo.full) modellen.set(m.sleutel, geo.full.slice());
+      // Losse stukken opsporen doen we hier ook maar meteen: het model staat
+      // er toch, en op de pagina zou het het scherm laten haperen.
+      let stukken = null;
+      try{ stukken = m.zoekStukken ? splitGeo(geo) : null; }catch(err){ stukken = null; }
+      const over = [geo.mesh.buffer];
+      const gezien = new Set([geo.mesh.buffer]);
+      const bij = (a) => { if (a && a.buffer && !gezien.has(a.buffer)){ gezien.add(a.buffer); over.push(a.buffer); } };
+      bij(geo.full);
+      for (const g of (stukken || [])){ bij(g.mesh); bij(g.full); }
+      postMessage({ type: "gelezen", id: m.id, geo, stukken }, over);
+    }catch(err){
+      postMessage({ type: "gelezen", id: m.id, fout: String(err && err.message || err) });
+    }
+    return;
+  }
+  if (m.cmd === "vergeet"){ modellen.delete(m.sleutel); return; }
+  if (m.cmd !== "snij") return;
+  const mesh = modellen.get(m.sleutel);
+  if (!mesh){ postMessage({ type: "klaar", id: m.id, fout: "model niet geladen" }); return; }
+  bezigId = m.id;
+  try{
+    const uit = sliceMesh(mesh, m.opts);
+    bezigId = null;
+    if (!uit){ postMessage({ type: "klaar", id: m.id, uit: null }); return; }
+    postMessage({ type: "klaar", id: m.id, uit }, [uit.lines.buffer]);
+  }catch(err){
+    bezigId = null;
+    postMessage({ type: "klaar", id: m.id, fout: String(err && err.message || err) });
+  }
+};
+`;
+
+const snijders = {
+  kan: typeof Worker !== "undefined" && typeof Blob !== "undefined" && typeof URL?.createObjectURL === "function",
+  url: null, pool: [], volgende: 0, taken: new Map(), seq: 0,
+  // welk onderdeel bij welke draad hoort: eenmaal verstuurd blijft het daar
+  vanDeel: new Map(),
+  // Eén kern laten we met rust, anders hapert het tekenen alsnog.
+  max: Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1)),
+};
+function snijder(sleutel){
+  if (!snijders.kan) return null;
+  // ken je dit onderdeel al ergens, ga dan terug naar diezelfde draad — anders
+  // moet het model opnieuw de deur uit
+  const eerder = snijders.vanDeel.get(sleutel);
+  if (eerder !== undefined && snijders.pool[eerder]) return snijders.pool[eerder];
+  if (!snijders.url){
+    try{
+      snijders.url = URL.createObjectURL(new Blob([WERKER_SRC], { type: "text/javascript" }));
+    }catch(e){ snijders.kan = false; return null; }
+  }
+  // rondje langs de draden, zodat het werk verdeeld raakt
+  if (snijders.pool.length < snijders.max){
+    try{
+      const w = new Worker(snijders.url);
+      w.__geladen = new Set();
+      w.postMessage({ cmd: "grenzen", limieten: { full: FULL_MESH_LIMIT, preview: PREVIEW_TRIANGLES } });
+      w.onmessage = (e) => {
+        const m = e.data;
+        const taak = snijders.taken.get(m.id);
+        if (!taak) return;
+        if (m.type === "voortgang"){ taak.voortgang?.(m.laag, m.lagen); return; }
+        snijders.taken.delete(m.id);
+        if (m.type === "gelezen"){ taak.klaar(m.fout ? { fout: m.fout } : { geo: m.geo, stukken: m.stukken }); return; }
+        taak.klaar(m.fout ? null : m.uit);
+      };
+      w.onerror = () => { snijders.kan = false; };
+      snijders.pool.push(w);
+      snijders.vanDeel.set(sleutel, snijders.pool.length - 1);
+      return w;
+    }catch(e){ snijders.kan = false; return null; }
+  }
+  // een nieuw onderdeel gaat naar de volgende draad in de rij
+  const i = snijders.volgende++ % snijders.pool.length;
+  snijders.vanDeel.set(sleutel, i);
+  return snijders.pool[i];
+}
+
+/* Snijdt een model in een aparte draad. Lukt dat niet, dan doet de pagina het
+   zelf — trager en met een haperend scherm, maar het werkt. */
+function snijInWorker(sleutel, mesh, opts, voortgang){
+  const w = snijder(sleutel);
+  if (!w) return Promise.resolve(sliceMesh(mesh, opts));
+  return new Promise((klaar) => {
+    const id = ++snijders.seq;
+    snijders.taken.set(id, { klaar, voortgang });
+    if (!w.__geladen.has(sleutel)){
+      // een kopie, want het origineel blijft hier nodig om te tekenen
+      const kopie = mesh.slice();
+      w.postMessage({ cmd: "laad", sleutel, mesh: kopie.buffer }, [kopie.buffer]);
+      w.__geladen.add(sleutel);
+    }
+    w.postMessage({ cmd: "snij", id, sleutel, opts });
+  });
+}
+/* Leest een STL in een aparte draad. Het model blijft daar meteen staan, dus
+   het hoeft er straks voor het snijden niet nog eens heen. */
+function leesStlInWorker(sleutel, buffer){
+  const w = snijder(sleutel);
+  if (!w) return Promise.resolve({ geo: parseStl(buffer) });
+  return new Promise((klaar) => {
+    const id = ++snijders.seq;
+    snijders.taken.set(id, { klaar });
+    w.postMessage({ cmd: "leesStl", id, sleutel, buffer, zoekStukken: true }, [buffer]);
+    w.__geladen.add(sleutel);
+  });
+}
+
+/* Een model dat weg is hoeft nergens meer te blijven staan. */
+function vergeetInWorkers(sleutel){
+  snijders.vanDeel.delete(sleutel);
+  for (const w of snijders.pool){
+    if (w.__geladen?.delete(sleutel)) w.postMessage({ cmd: "vergeet", sleutel });
+  }
+}
+
+/* De versie voor op de pagina zelf: alleen nodig als een Worker niet kan. */
+const REKENWERK = (new Function(SLICER_SRC + "\nreturn { sliceMesh, geoFromMesh, sampleMesh, parseStl, splitGeo, findComponents, LIMIETEN };"))();
+const { sliceMesh: sliceMeshDirect, geoFromMesh, sampleMesh, parseStl, splitGeo, findComponents } = REKENWERK;
+REKENWERK.LIMIETEN.full = FULL_MESH_LIMIT;
+REKENWERK.LIMIETEN.preview = PREVIEW_TRIANGLES;
+function sliceMesh(mesh, opts){
+  return sliceMeshDirect(mesh, { ...opts, settings: opts.settings || slicerSettings() });
 }
 
 /* Materiaalvolume: de wand plus het ingevulde binnenwerk. */
@@ -1358,88 +1712,12 @@ function fitsPlate(sizeMm){
    Van beide houden we de driehoeken bij, zodat we het model massief kunnen
    tonen, kunnen opmeten en kunnen opsplitsen in losse delen.
    ===================================================================== */
-const PREVIEW_TRIANGLES = 40000;   // lichte versie, alleen tijdens het slepen
-const FULL_MESH_LIMIT   = 400000;  // daarboven bewaren we alleen de steekproef
 
 /* Rekent volume, oppervlakte en afmetingen uit een reeks driehoeken. */
-function geoFromMesh(mesh, opts){
-  let vol6 = 0, area2 = 0;
-  const min = [Infinity,Infinity,Infinity], max = [-Infinity,-Infinity,-Infinity];
-  for (let o = 0; o < mesh.length; o += 9){
-    const ax=mesh[o],   ay=mesh[o+1], az=mesh[o+2];
-    const bx=mesh[o+3], by=mesh[o+4], bz=mesh[o+5];
-    const cx=mesh[o+6], cy=mesh[o+7], cz=mesh[o+8];
-    vol6 += ax*(by*cz - bz*cy) - ay*(bx*cz - bz*cx) + az*(bx*cy - by*cx);
-    const ux=bx-ax, uy=by-ay, uz=bz-az, vx=cx-ax, vy=cy-ay, vz=cz-az;
-    area2 += Math.hypot(uy*vz - uz*vy, uz*vx - ux*vz, ux*vy - uy*vx);
-    for (let k = 0; k < 3; k++){
-      const p = [ [ax,ay,az], [bx,by,bz], [cx,cy,cz] ][k];
-      for (let d = 0; d < 3; d++){
-        if (p[d] < min[d]) min[d] = p[d];
-        if (p[d] > max[d]) max[d] = p[d];
-      }
-    }
-  }
-  return {
-    triangles: (opts?.triangles) ?? mesh.length / 9,
-    volume: Math.abs(vol6) / 6,
-    surface: area2 / 2,
-    size: [max[0]-min[0], max[1]-min[1], max[2]-min[2]],
-    center: [(min[0]+max[0])/2, (min[1]+max[1])/2, (min[2]+max[2])/2],
-    minZ: min[2],
-    mesh: sampleMesh(mesh),
-    full: mesh.length / 9 <= FULL_MESH_LIMIT ? mesh : null,
-    // Van een te zwaar bestand houden we maar een deel van de driehoeken over.
-    // Daar kun je wel een vorm van tonen, maar niet betrouwbaar op snijden.
-    decimated: ((opts?.triangles) ?? mesh.length / 9) > mesh.length / 9,
-    colorHex: opts?.colorHex || null,
-    label: opts?.label || null,
-  };
-}
 
 /* Gelijkmatige steekproef zodat de weergave licht blijft. */
-function sampleMesh(mesh){
-  const n = mesh.length / 9;
-  if (n <= PREVIEW_TRIANGLES) return mesh;
-  const step = Math.ceil(n / PREVIEW_TRIANGLES);
-  const out = new Float32Array(Math.ceil(n / step) * 9);
-  let w = 0;
-  for (let i = 0; i < n; i += step){
-    out.set(mesh.subarray(i * 9, i * 9 + 9), w);
-    w += 9;
-  }
-  return out.subarray(0, w);
-}
 
 /* --------------------------- STL --------------------------- */
-function parseStl(buffer){
-  const view = new DataView(buffer);
-  const looksBinary = buffer.byteLength >= 84 &&
-    view.getUint32(80, true) * 50 + 84 === buffer.byteLength;
-
-  if (looksBinary){
-    const n = view.getUint32(80, true);
-    if (!n) return null;
-    const keep = Math.min(n, FULL_MESH_LIMIT);
-    const step = Math.max(1, Math.ceil(n / keep));
-    const mesh = new Float32Array(Math.ceil(n / step) * 9);
-    let w = 0;
-    for (let i = 0; i < n; i += step){
-      const o = 84 + i * 50 + 12;                 // normaalvector overslaan
-      for (let k = 0; k < 9; k++) mesh[w + k] = view.getFloat32(o + k * 4, true);
-      w += 9;
-    }
-    return geoFromMesh(mesh.subarray(0, w), { triangles: n });
-  }
-
-  const text = new TextDecoder().decode(new Uint8Array(buffer));
-  const re = /vertex\s+(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)/g;
-  const vals = [];
-  let m;
-  while ((m = re.exec(text))) vals.push(+m[1], +m[2], +m[3]);
-  if (vals.length < 9) return null;
-  return geoFromMesh(new Float32Array(vals));
-}
 
 /* --------------------------- ZIP --------------------------- */
 /* Een 3MF is een zip. De browser kan deflate zelf uitpakken, dus we hebben
@@ -1706,108 +1984,8 @@ async function parse3mf(buffer){
    rooster overheen, kleuren de vakjes waar materiaal zit, en kijken welke
    groepen vakjes aan elkaar hangen. Dat is snel en werkt ook op een
    steekproef, terwijl vergelijken van punt tot punt veel te zwaar zou zijn. */
-const GRID = 56;
-function findComponents(geo){
-  const mesh = geo.full || geo.mesh;
-  if (!mesh || mesh.length < 18) return null;
-  const [sx, sy, sz] = geo.size;
-  const span = Math.max(sx, sy, sz) || 1;
-  const cell = span / GRID;
-  const nx = Math.max(1, Math.ceil(sx / cell) + 1);
-  const ny = Math.max(1, Math.ceil(sy / cell) + 1);
-  const nz = Math.max(1, Math.ceil(sz / cell) + 1);
-  if (nx * ny * nz > 4_000_000) return null;
-
-  const ox = geo.center[0] - sx/2, oy = geo.center[1] - sy/2, oz = geo.minZ;
-  const occupied = new Uint8Array(nx * ny * nz);
-  const at = (x,y,z) => (z * ny + y) * nx + x;
-  const cellOf = (x,y,z) => [
-    Math.min(nx-1, Math.max(0, Math.floor((x - ox) / cell))),
-    Math.min(ny-1, Math.max(0, Math.floor((y - oy) / cell))),
-    Math.min(nz-1, Math.max(0, Math.floor((z - oz) / cell))),
-  ];
-
-  // Een driehoek moet het rooster echt vullen. Alleen de hoekpunten markeren
-  // laat gaten zodra een vlak groter is dan een vakje, en dan valt één
-  // voorwerp uiteen in tientallen losse stukjes.
-  // Weinig driehoeken betekent grote vlakken, en die hebben veel monsters
-  // nodig. Een fijne mesh heeft ze niet: daar past een driehoek al in één
-  // vakje. Het budget vangt de zeldzame gevallen af waarin beide samenvallen.
-  const nTri = mesh.length / 9;
-  const cap = nTri <= 50000 ? 384 : nTri <= 200000 ? 32 : 8;
-  let budget = 8_000_000;
-  for (let o = 0; o < mesh.length; o += 9){
-    const ax=mesh[o],   ay=mesh[o+1], az=mesh[o+2];
-    const bx=mesh[o+3], by=mesh[o+4], bz=mesh[o+5];
-    const cx=mesh[o+6], cy=mesh[o+7], cz=mesh[o+8];
-    const longest = Math.max(
-      Math.hypot(bx-ax, by-ay, bz-az),
-      Math.hypot(cx-bx, cy-by, cz-bz),
-      Math.hypot(ax-cx, ay-cy, az-cz));
-    // Weinig grote driehoeken hebben een fijne verdeling nodig; bij een fijne
-    // mesh zijn ze al kleiner dan een vakje en volstaat één monster.
-    const steps = Math.min(cap, Math.max(1, Math.ceil(longest / (cell * 0.5))));
-    budget -= (steps + 1) * (steps + 2) / 2;
-    if (budget < 0) return null;                 // te zwaar: liever niets beweren
-    for (let i = 0; i <= steps; i++){
-      for (let j = 0; j <= steps - i; j++){
-        const u = i / steps, v = j / steps, w = 1 - u - v;
-        const [gx, gy, gz] = cellOf(
-          ax*w + bx*u + cx*v,
-          ay*w + by*u + cy*v,
-          az*w + bz*u + cz*v);
-        occupied[at(gx,gy,gz)] = 1;
-      }
-    }
-  }
-
-  const comp = new Int32Array(occupied.length).fill(-1);
-  let groups = 0;
-  const stack = [];
-  for (let i = 0; i < occupied.length; i++){
-    if (!occupied[i] || comp[i] >= 0) continue;
-    const id = groups++;
-    stack.length = 0; stack.push(i); comp[i] = id;
-    while (stack.length){
-      const c = stack.pop();
-      const x = c % nx, y = ((c - x) / nx) % ny, z = Math.floor(c / (nx * ny));
-      for (const [dx,dy,dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]){
-        const X = x+dx, Y = y+dy, Z = z+dz;
-        if (X<0||Y<0||Z<0||X>=nx||Y>=ny||Z>=nz) continue;
-        const j = at(X,Y,Z);
-        if (occupied[j] && comp[j] < 0){ comp[j] = id; stack.push(j); }
-      }
-    }
-  }
-  if (groups <= 1) return null;
-  return { comp, cellOf, at, groups };
-}
 
 /* Splitst een model in losse geometrieën, één per gevonden deel. */
-function splitGeo(geo){
-  const info = findComponents(geo);
-  if (!info) return null;
-  const mesh = geo.full || geo.mesh;
-  const buckets = Array.from({ length: info.groups }, () => []);
-  for (let o = 0; o < mesh.length; o += 9){
-    const [gx, gy, gz] = info.cellOf(
-      (mesh[o]+mesh[o+3]+mesh[o+6])/3,
-      (mesh[o+1]+mesh[o+4]+mesh[o+7])/3,
-      (mesh[o+2]+mesh[o+5]+mesh[o+8])/3);
-    const id = info.comp[info.at(gx,gy,gz)];
-    if (id >= 0) buckets[id].push(o);
-  }
-  const out = [];
-  for (const idxs of buckets){
-    if (idxs.length < 4) continue;                  // rommel overslaan
-    const m = new Float32Array(idxs.length * 9);
-    idxs.forEach((o, i) => m.set(mesh.subarray(o, o + 9), i * 9));
-    out.push(geoFromMesh(m, { colorHex: geo.colorHex }));
-  }
-  // grootste eerst: dat is meestal het hoofdonderdeel
-  out.sort((a, b) => b.volume - a.volume);
-  return out.length > 1 ? out : null;
-}
 
 /* =====================================================================
    Een los onderdeel als eigen bestand
@@ -1970,16 +2148,24 @@ async function haalVoorbeeld(productId){
 /* --------------------------- inlezen per bestand --------------------------- */
 /* Geeft één of meer geometrieën terug: een 3MF met meerdere objecten of
    platen valt hier al uiteen in losse delen. */
-async function analyzeFile(file){
+async function analyzeFile(file, sleutel){
   const buf = await file.arrayBuffer();
   if (/\.3mf$/i.test(file.name)){
     if (typeof DecompressionStream === "undefined"){
       throw new Error("deze browser kan 3mf-bestanden niet uitpakken — stuur een STL door");
     }
+    // Een 3mf uitpakken vraagt de XML-lezer van de pagina; die is er in een
+    // aparte draad niet. Dat blijft dus hier.
     return await parse3mf(buf);
   }
-  const geo = parseStl(buf);
+  // Een STL lezen we wél naast het scherm: dat is het zware stuk bij een groot
+  // bestand, en zo blijft de pagina ondertussen soepel.
+  const uit = sleutel ? await leesStlInWorker(sleutel, buf) : { geo: parseStl(buf) };
+  if (uit.fout) throw new Error(uit.fout);
+  const geo = uit.geo;
   if (!geo || !geo.volume) throw new Error("geen bruikbare vorm gevonden");
+  // de draad zocht meteen al uit of het model uit losse stukken bestaat
+  if (uit.stukken) geo.__stukken = uit.stukken;
   return [geo];
 }
 
@@ -3539,6 +3725,7 @@ window.__splitPart = (id) => {
   const at = parts.indexOf(part);
   state.parts.splice(at, 1, ...made);
   wisBestand(part.id);
+  vergeetInWorkers(part.id);
   bewaarOpdracht();
   notify(`Gesplitst in ${made.length} onderdelen`);
   render();
@@ -3553,16 +3740,39 @@ function partFilament(p){
 }
 /* Snijdt het onderdeel echt door en onthoudt de uitkomst, want dat werk hoeft
    maar één keer per combinatie van instellingen. */
+/* Het snijwerk gebeurt naast het scherm. Is de uitkomst er nog niet, dan
+   geven we niets terug en rekent de shop zolang met de schatting uit volume en
+   oppervlak; zodra de draad klaar is verschijnt het echte getal vanzelf. */
 function partSlice(p){
   const mesh = p.geo?.full;
   if (!mesh || p.geo.decimated) return null;
   const k = partFactor(p);
   const sleutel = `${k}|${p.layer}|${p.infill}|${JSON.stringify(pricing().slicer || {})}`;
   if (p.__sliceKey === sleutel) return p.__slice;
-  p.__slice = sliceMesh(mesh, { layerHeight: parseFloat(p.layer), infill: p.infill, scale: k });
-  p.__sliceKey = sleutel;
-  return p.__slice;
+  if (p.__sliceBezig === sleutel) return null;           // draait al
+
+  p.__sliceBezig = sleutel;
+  p.__sliceVoortgang = 0;
+  snijInWorker(p.id, mesh,
+    { layerHeight: parseFloat(p.layer), infill: p.infill, scale: k, settings: slicerSettings() },
+    (laag, lagen) => {
+      // alleen bijwerken wat het oog nodig heeft; niet het hele scherm opnieuw
+      p.__sliceVoortgang = lagen ? laag / lagen : 0;
+      const balk = document.querySelector(`[data-snij="${p.id}"] > span`);
+      if (balk) balk.style.width = Math.round(p.__sliceVoortgang * 100) + "%";
+    })
+    .then((uit) => {
+      if (p.__sliceBezig !== sleutel) return;            // instellingen intussen gewijzigd
+      p.__slice = uit;
+      p.__sliceKey = sleutel;
+      p.__sliceBezig = null;
+      bewaarOpdracht();
+      if (state.view === "custom") render();
+    });
+  return null;
 }
+/* Draait er nog iets voor dit onderdeel? */
+function partSnijdt(p){ return !!p.__sliceBezig; }
 
 function partEstimate(p){
   if (!p.geo) return null;
@@ -3684,6 +3894,11 @@ function partCard(p){
       <p class="muted font-mono" style="font-size:10px;margin:-6px 0 12px;">${esc(p.fileName)}</p>
 
       ${p.busy ? `<p class="muted" style="font-size:13px;">Model analyseren…</p>` : ``}
+      ${!p.busy && partSnijdt(p) ? `
+        <div class="snijbalk" data-snij="${esc(p.id)}" title="Het snijden gebeurt naast het scherm — je kunt gewoon doorwerken">
+          <span style="width:${Math.round((p.__sliceVoortgang || 0) * 100)}%;"></span>
+        </div>
+        <p class="muted" style="font-size:11px;margin:6px 0 12px;">Aan het snijden — je kunt ondertussen doorwerken.</p>` : ``}
       ${p.error ? `
         <div class="cart-item" style="border-color:var(--accent);margin-bottom:12px;">
           <p style="font-size:13px;margin:0;color:var(--accent);">${esc(p.error)}</p>
@@ -3888,9 +4103,12 @@ function attachMeshViewers(){
       if (sl) drawSlices(cv, part.geo, sl, { ...opts, scale: partFactor(part) });
       else drawMesh(cv, part.geo, opts);
     };
-    paint(false);
-    // na het laden van het lettertype of een resize klopt de maat pas echt
-    requestAnimationFrame(() => paint(false));
+    // Eerst de lichte versie: die staat er meteen. Het volledige model — dat
+    // kunnen honderdduizenden driehoeken zijn — tekenen we een tel later, als
+    // de pagina toch even niets te doen heeft. Zo hapert er niets.
+    paint(true);
+    const straks = window.requestIdleCallback || ((fn) => setTimeout(fn, 60));
+    straks(() => { if (document.body.contains(cv)) paint(false); });
 
     let dragging = false, lx = 0, ly = 0, netjes = null;
     cv.onpointerdown = (e) => { dragging = true; lx = e.clientX; ly = e.clientY; cv.setPointerCapture(e.pointerId); };
@@ -3942,7 +4160,7 @@ async function analyseerWachtende(){
         part.error = "Van .obj lezen we de maten niet automatisch — we sturen je een prijs na controle.";
         part.busy = false; render(); continue;
       }
-      const geos = await analyzeFile(part.file);
+      const geos = await analyzeFile(part.file, part.id);
       part.geo = geos[0];
       applyGeoColor(part, geos[0]);
       // een 3mf met meerdere objecten of platen valt meteen uiteen; elk object
@@ -3974,8 +4192,9 @@ async function analyseerWachtende(){
         state.parts.splice(at + 1, 0, ...extra);
         notify(`${geos.length} onderdelen gevonden in ${part.fileName}`);
       } else {
-        // één object, maar misschien meerdere losse stukken erin
-        part.splittable = splitGeo(geos[0]);
+        // één object, maar misschien meerdere losse stukken erin. Dat zocht de
+        // draad al uit tijdens het inlezen; anders doen we het hier alsnog.
+        part.splittable = geos[0].__stukken ?? splitGeo(geos[0]);
       }
       // meteen doorsnijden, zodat het eerste scherm de prijs al klaar heeft
       partSlice(part);
@@ -4075,6 +4294,7 @@ function attachCustomHandlers(){
     btn.onclick = () => {
       state.parts = (state.parts || []).filter(p => p.id !== btn.dataset.remove);
       wisBestand(btn.dataset.remove);
+      vergeetInWorkers(btn.dataset.remove);
       bewaarOpdracht();
       render();
     };
@@ -6318,6 +6538,7 @@ window.__lc = {
   sliceMesh, partSlice, partEstimate, projectTotals,
   pricing, slicerSettings, render,
   slotFilament, currentFilament,
+  get snijders(){ return snijders; },
 };
 
 /* --------------------------- boot --------------------------- */
