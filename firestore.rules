@@ -92,12 +92,6 @@ service cloud.firestore {
       }
     }
 
-    // --- kleine hulpdocumenten -------------------------------------
-    match /meta/{id} {
-      allow read: if true;
-      allow write: if beheerder();
-    }
-
     // Alles wat hier niet genoemd staat, gaat dicht.
     match /{document=**} {
       allow read, write: if false;

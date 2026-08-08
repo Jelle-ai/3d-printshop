@@ -6,39 +6,18 @@ precies moet klikken.
 
 ## 1. De regels van de databank — dit stopt echt na 30 dagen
 
-Je Firestore staat in **testmodus**. Dat betekent: iedereen mag alles lezen én
-schrijven, en na dertig dagen gaat de deur helemaal dicht. Daarna kan niemand
-nog bestellen en zie jij geen bestellingen meer.
+Je Firestore staat in **testmodus**: iedereen mag alles lezen én schrijven, en
+na dertig dagen gaat de deur helemaal dicht. Daarna kan niemand nog bestellen
+en zie jij geen bestellingen meer.
 
-In dit project staat `firestore.rules` klaar. Die regels doen twee dingen: ze
-laten alles werken zoals het nu werkt, en ze verlopen nooit.
+**➜ De stap-voor-stap uitleg staat in [FIRESTORE.md](FIRESTORE.md).**
+Vijf minuten werk, niets te installeren, geen gegevens kwijt.
 
-1. Ga naar de [Firebase-console](https://console.firebase.google.com/) → jouw
-   project → **Firestore Database** → tabblad **Regels**.
-2. Selecteer alles wat er staat en plak de volledige inhoud van
-   `firestore.rules` erin.
-3. Klik **Publiceren**.
-
-Het werkt meteen. Wat er verandert:
-
-| | Voor | Na |
-| --- | --- | --- |
-| Collectie bekijken | iedereen | iedereen |
-| Bestelling plaatsen | iedereen | wie ingelogd is, en alleen op eigen naam |
-| Bestellingen bekijken | **iedereen** | jij, en elke klant enkel zijn eigen |
-| Producten wijzigen | **iedereen** | alleen jij |
-| Bestelling wissen | iedereen | niemand — alles blijft in het archief |
-| Vervalt | na 30 dagen | nooit |
-
-Dat derde punt is geen detail: nu kan iedereen die je adres kent de
-adresgegevens van al je klanten lezen.
-
-### Jezelf als beheerder
-
-De regels kijken naar `isAdmin` in je eigen profiel onder `users`. Dat vlaggetje
-zet de site automatisch voor `jelle@mattan.be`. Wil je later een ander adres
-gebruiken, pas dan twee plekken aan: `ADMIN_EMAILS` in `index.html` en het
-e-mailadres in `firestore.rules`.
+Kort samengevat: de kant-en-klare regels staan in `firestore.rules`; die plak
+je in de Firebase-console onder Firestore Database → Rules en publiceer je.
+Ze laten alles werken zoals het nu werkt, verlopen nooit, en sluiten meteen een
+gat: op dit moment kan iedereen die je webadres kent de adresgegevens van al je
+klanten lezen.
 
 ## 2. Authenticatie
 
