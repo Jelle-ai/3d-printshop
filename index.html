@@ -2079,6 +2079,7 @@ async function placeOrder(shippingCountry, address, payment){
     const ref = await addDoc(collection(db,"orders"), order);
     state.cart = []; saveCart();
     state.__checkout = null;
+    state.__ckVeld = null; state.__ckLand = null; state.__adresCheck = null;
     notify("Betaald met testgeld — bestelling geplaatst!");
     go("account");
     const geplaatst = { id: ref.id, ...order };
@@ -3846,19 +3847,20 @@ function wagenSpecs(it){
   const regel = (sleutel, waarde) =>
     `<div class="wagen-spec"><span class="sleutel">${esc(sleutel)}</span><span class="waarde">${waarde}</span></div>`;
   const uit = [];
+  const vakken = Array.isArray(it.colorChoices) ? it.colorChoices : [];
 
-  // één kleur voor het hele stuk
-  if (it.filament){
-    if (it.filament.type) uit.push(regel("Materiaal", esc(it.filament.type)));
-    uit.push(regel("Kleur", kleurBol(it.filament, it.filament.name)));
-  }
-
-  // een model met benoemde kleurvakken: mond geel, arm blauw
-  if (Array.isArray(it.colorChoices) && it.colorChoices.length){
-    for (const c of it.colorChoices){
+  if (vakken.length){
+    // een model met benoemde kleurvakken: mond geel, arm blauw. Alleen die
+    // vakken tonen — de losse kleur eronder is die van het eerste vak en zou
+    // er als een vreemde extra regel boven komen te staan.
+    for (const c of vakken){
       uit.push(regel(c.slot || "Kleur",
         kleurBol(c, [c.type, c.name].filter(Boolean).join(" · "))));
     }
+  } else if (it.filament){
+    // één kleur voor het hele stuk
+    if (it.filament.type) uit.push(regel("Materiaal", esc(it.filament.type)));
+    uit.push(regel("Kleur", kleurBol(it.filament, it.filament.name)));
   }
 
   // een eigen opdracht met meerdere onderdelen
@@ -3928,9 +3930,64 @@ function viewCart(){
     </div>`;
 }
 
+/* =====================================================================
+   Bestaat dit adres wel?
+   Een pakket dat naar een straat gaat die niet bestaat, komt terug. We kijken
+   het daarom na vóór het betalen: eerst de vorm (staat er een huisnummer bij,
+   klopt de postcode voor dat land), daarna of het adres echt te vinden is in
+   OpenStreetMap. Vinden we het niet, dan houden we niemand tegen — nieuwe
+   straten staan er soms nog niet in — maar je krijgt wel de vraag of het klopt.
+   ===================================================================== */
+const POSTCODE_VORM = {
+  "België":     { re: /^\d{4}$/,               uitleg: "vier cijfers, bijvoorbeeld 9280" },
+  "Nederland":  { re: /^\d{4}\s?[A-Za-z]{2}$/, uitleg: "vier cijfers en twee letters, bijvoorbeeld 1012 AB" },
+  "Duitsland":  { re: /^\d{5}$/,               uitleg: "vijf cijfers, bijvoorbeeld 50667" },
+  "Frankrijk":  { re: /^\d{5}$/,               uitleg: "vijf cijfers, bijvoorbeeld 75001" },
+};
+const LANDCODE = { "België": "be", "Nederland": "nl", "Duitsland": "de", "Frankrijk": "fr" };
+
+function adresVorm({ street, zip, city }, land){
+  if (!street || !zip || !city) return "Vul je adres volledig in";
+  if (!/\d/.test(street)) return "Zet het huisnummer bij de straat";
+  const vorm = POSTCODE_VORM[land];
+  if (vorm && !vorm.re.test(zip)) return `De postcode van ${land} bestaat uit ${vorm.uitleg}`;
+  return null;
+}
+
+/* OpenStreetMap kent bijna elk adres en vraagt er niets voor. Lukt het
+   opzoeken niet — geen verbinding, dienst plat — dan laten we het gaan: aan
+   een klant die niet kan bestellen heeft niemand iets. */
+async function zoekAdres({ street, zip, city }, land){
+  const p = new URLSearchParams({ format: "jsonv2", limit: "1", addressdetails: "1", street, city });
+  if (POSTCODE_VORM[land]) p.set("postalcode", zip);
+  if (LANDCODE[land]) p.set("countrycodes", LANDCODE[land]);
+  try{
+    const res = await fetch("https://nominatim.openstreetmap.org/search?" + p, {
+      headers: { "Accept": "application/json" },
+    });
+    if (!res.ok) return { status: "onbereikbaar" };
+    const rij = (await res.json())[0];
+    if (!rij) return { status: "onbekend" };
+    const a = rij.address || {};
+    return {
+      status: "gevonden",
+      // wat OpenStreetMap ervan maakt; handig als iemand zich vertikt heeft
+      gevonden: {
+        zip: a.postcode || zip,
+        city: a.city || a.town || a.village || a.municipality || city,
+      },
+    };
+  }catch(e){ return { status: "onbereikbaar" }; }
+}
+
 function viewCheckout(){
-  const addr = state.profile?.address || {};
-  const options = SHIPPING_RATES.map(r=>`<option value="${r.country}">${r.country} — ${fmtEUR(r.price)}</option>`).join("");
+  // wat er getypt is overleeft een hertekening; anders ben je het kwijt zodra
+  // de adrescontrole iets te melden heeft
+  const addr = state.__ckVeld || state.profile?.address || {};
+  const land = state.__ckLand || SHIPPING_RATES[0].country;
+  const rate = SHIPPING_RATES.find(r => r.country === land) || SHIPPING_RATES[0];
+  const options = SHIPPING_RATES.map(r=>`<option value="${r.country}"${r.country===land?" selected":""}>${r.country} — ${fmtEUR(r.price)}</option>`).join("");
+  const c = state.__adresCheck;
   return `
     <div style="padding:32px 0;max-width:480px;">
       <button class="back" onclick="go('cart')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Terug naar winkelwagen</button>
@@ -3942,29 +3999,106 @@ function viewCheckout(){
       </div>
       <label class="field-label">Land</label>
       <select class="field" id="ckCountry">${options}</select>
+
+      ${c?.status === "onbekend" ? `
+        <div class="cart-item" id="adresOnbekend" style="border-color:var(--accent);margin:14px 0;">
+          <p style="font-size:13px;font-weight:600;margin:0 0 6px;color:var(--accent);">
+            ${ic("triangle-exclamation")} Dit adres vinden we niet terug
+          </p>
+          <p class="muted" style="font-size:13px;line-height:1.55;margin:0 0 10px;">
+            Kijk de straat, het huisnummer en de gemeente nog even na. Klopt alles?
+            Dan kan het een nieuwe straat zijn die nog niet op de kaart staat.
+          </p>
+          <button class="btn btn-ghost btn-sm" id="tochDoorBtn">Het klopt, ga door</button>
+        </div>` : ``}
+
+      ${c?.status === "afwijkend" ? `
+        <div class="cart-item" id="adresAfwijkend" style="border-color:var(--accent);margin:14px 0;">
+          <p style="font-size:13px;font-weight:600;margin:0 0 6px;">
+            ${ic("location-dot")} Bedoel je dit adres?
+          </p>
+          <p style="font-size:14px;margin:0 0 10px;">
+            ${esc(addr.street)}, <strong>${esc(c.voorstel.zip)} ${esc(c.voorstel.city)}</strong>
+          </p>
+          <div class="row" style="gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-accent btn-sm" id="neemOverBtn">Ja, neem over</button>
+            <button class="btn btn-ghost btn-sm" id="tochDoorBtn">Nee, hou wat ik typte</button>
+          </div>
+        </div>` : ``}
+
       <div class="cart-item font-mono" style="font-size:13px;margin:16px 0;">
         <div class="between"><span class="muted">Subtotaal</span><span>${fmtEUR(cartTotal())}</span></div>
-        <div class="between"><span class="muted">Verzending</span><span id="ckShipVal">${fmtEUR(SHIPPING_RATES[0].price)}</span></div>
-        <div class="between" style="border-top:1px solid var(--surface2);margin-top:6px;padding-top:6px;color:var(--accent);"><span>Totaal</span><span id="ckTotalVal">${fmtEUR(cartTotal()+SHIPPING_RATES[0].price)}</span></div>
+        <div class="between"><span class="muted">Verzending</span><span id="ckShipVal">${fmtEUR(rate.price)}</span></div>
+        <div class="between" style="border-top:1px solid var(--surface2);margin-top:6px;padding-top:6px;color:var(--accent);"><span>Totaal</span><span id="ckTotalVal">${fmtEUR(cartTotal()+rate.price)}</span></div>
       </div>
-      <button class="btn btn-accent" style="width:100%;" id="placeOrderBtn">Naar betaling <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button>
+      <button class="btn btn-accent" style="width:100%;" id="placeOrderBtn"${c?.bezig ? " disabled" : ""}>
+        ${c?.bezig ? "Adres nakijken…" : `Naar betaling <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>`}
+      </button>
       <p class="footer-note"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> Demo-omgeving: er wordt geen echte betaling verwerkt.</p>
     </div>`;
 }
 function attachCheckoutHandlers(){
   const sel = document.getElementById('ckCountry');
+  const lees = () => ({
+    street: document.getElementById('ckStreet').value.trim(),
+    zip: document.getElementById('ckZip').value.trim(),
+    city: document.getElementById('ckCity').value.trim(),
+  });
   const updateTotals = () => {
     const rate = SHIPPING_RATES.find(r=>r.country===sel.value) || SHIPPING_RATES[0];
     document.getElementById('ckShipVal').textContent = fmtEUR(rate.price);
     document.getElementById('ckTotalVal').textContent = fmtEUR(cartTotal()+rate.price);
   };
-  sel.onchange = updateTotals;
-  document.getElementById('placeOrderBtn').onclick = () => {
-    const street = document.getElementById('ckStreet').value.trim();
-    const zip = document.getElementById('ckZip').value.trim();
-    const city = document.getElementById('ckCity').value.trim();
-    if (!street || !zip || !city){ notify("Vul je adres volledig in"); return; }
-    state.__checkout = { country: sel.value, address: { street, zip, city } };
+  sel.onchange = () => { state.__ckLand = sel.value; state.__adresCheck = null; updateTotals(); };
+  // typ je iets bij, dan geldt een eerder oordeel niet meer
+  for (const id of ['ckStreet','ckZip','ckCity']){
+    document.getElementById(id).oninput = () => {
+      state.__ckVeld = lees();
+      if (state.__adresCheck) { state.__adresCheck = null; render(); }
+    };
+  }
+
+  const doorGaan = () => {
+    state.__checkout = { country: sel.value, address: state.__ckVeld };
+    state.__adresCheck = null;
+    go("payment");
+  };
+  const door = document.getElementById('tochDoorBtn');
+  if (door) door.onclick = doorGaan;
+  const over = document.getElementById('neemOverBtn');
+  if (over) over.onclick = () => {
+    state.__ckVeld = { ...state.__ckVeld, ...state.__adresCheck.voorstel };
+    doorGaan();
+  };
+
+  document.getElementById('placeOrderBtn').onclick = async () => {
+    const adres = lees();
+    state.__ckVeld = adres;
+    state.__ckLand = sel.value;
+    const fout = adresVorm(adres, sel.value);
+    if (fout){ notify(fout); return; }
+
+    state.__adresCheck = { bezig: true };
+    render();
+    const uitslag = await zoekAdres(adres, sel.value);
+
+    if (uitslag.status === "onbekend"){
+      state.__adresCheck = { status: "onbekend" };
+      render();
+      return;
+    }
+    if (uitslag.status === "gevonden"){
+      const g = uitslag.gevonden;
+      const anders = (x, y) => x.replace(/\s/g, "").toLowerCase() !== y.replace(/\s/g, "").toLowerCase();
+      if (anders(g.zip, adres.zip) || anders(g.city, adres.city)){
+        state.__adresCheck = { status: "afwijkend", voorstel: g };
+        render();
+        return;
+      }
+    }
+    // gevonden en gelijk, of we konden het niet nakijken: laat de klant door
+    state.__checkout = { country: sel.value, address: adres };
+    state.__adresCheck = null;
     go("payment");
   };
 }
