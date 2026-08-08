@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>LayerCraft — 3D-prints op maat</title>
+<title>Extrudo — 3D-prints op maat</title>
 <meta name="theme-color" content="#F5F4F0" />
 <meta name="description" content="3D-prints op maat. Kies uit de collectie of upload je eigen model — wij printen het in Bambu Lab-filament en sturen het op." />
 <script>
@@ -68,13 +68,9 @@
   .between{display:flex;align-items:center;justify-content:space-between;gap:12px;}
 
   /* ---------- strook + kop ---------- */
-  .ticker{
     background:var(--ink);color:var(--paper);font-family:'IBM Plex Mono',monospace;
     font-size:10px;letter-spacing:.16em;text-transform:uppercase;
   }
-  .ticker-inner{max-width:1140px;margin:0 auto;padding:7px 24px;display:flex;gap:22px;overflow:hidden;white-space:nowrap;}
-  .ticker-inner span:nth-child(n+3){opacity:.55;}
-  @media(max-width:640px){.ticker-inner{padding:6px 16px;gap:16px;}.ticker-inner span:nth-child(n+3){display:none;}}
 
   header{position:sticky;top:0;z-index:40;background:var(--paper);border-bottom:1px solid var(--ink);}
   .header-inner{max-width:1140px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;}
@@ -189,6 +185,29 @@
   .cart-item, .order-card, .admin-row, .fil-block, .part-card{
     background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:15px;
   }
+  /* ---------- winkelwagen ----------
+     De bovenste helft vertelt wát je koopt, de onderste wat het kost en
+     hoeveel. Niets staat naast elkaar geperst, dus niets valt weg. */
+  .wagen-kop{display:flex;align-items:flex-start;gap:11px;}
+  .wagen-tekst{min-width:0;flex:1;}
+  .wagen-naam{font-size:15px;font-weight:600;line-height:1.3;word-break:break-word;}
+  .wagen-specs{display:flex;flex-direction:column;gap:5px;margin-top:8px;}
+  .wagen-spec{display:flex;align-items:flex-start;gap:8px;font-size:13px;line-height:1.35;}
+  .wagen-spec .sleutel{
+    color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:11px;
+    letter-spacing:.04em;text-transform:uppercase;flex:0 0 74px;padding-top:2px;
+  }
+  .wagen-spec .waarde{min-width:0;flex:1;word-break:break-word;
+    display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+  .wagen-spec .fil-chip{width:16px;height:16px;border-radius:5px;flex-shrink:0;}
+  .wagen-deel{display:flex;align-items:center;gap:7px;flex-wrap:wrap;width:100%;}
+  .wagen-voet{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    margin-top:13px;padding-top:12px;border-top:1px solid var(--line);
+  }
+  .wagen-prijs{font-family:'IBM Plex Mono',monospace;font-size:13px;}
+  .wagen-prijs .totaal{font-size:15px;font-weight:600;}
+  @media(max-width:420px){ .wagen-spec{flex-direction:column;gap:2px;} .wagen-spec .sleutel{flex:none;} }
   .kv{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:4px 0;}
   .kv span:first-child{color:var(--muted);}
   .kv span:last-child{font-family:'IBM Plex Mono',monospace;}
@@ -271,7 +290,7 @@
   .slot-body{padding:0 12px 12px;}
   /* korting */
   /* de bestelling waar een link uit een bericht naartoe wees */
-  .order-card.aangewezen{
+  .aangewezen{
     border-color:var(--accent);
     box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
     transition:box-shadow .3s, border-color .3s;
@@ -398,14 +417,7 @@
 </head>
 <body>
 
-<div class="ticker">
-  <div class="ticker-inner">
-    <span>Bambu Lab X1C</span>
-    <span>256 &times; 256 &times; 256 mm</span>
-    <span>Verzending uit Lebbeke, BE</span>
-    <span>Prijs uit de echte slice, niet uit een schatting</span>
-  </div>
-</div>
+
 
 <header>
   <div class="header-inner">
@@ -415,7 +427,7 @@
         <rect x="5"  y="10.5" width="14" height="3" fill="currentColor" opacity=".72"/>
         <rect x="7"  y="5.5"  width="10" height="3" fill="var(--accent)"/>
       </svg>
-      <span class="brand-name">Layercraft</span>
+      <span class="brand-name">Extrudo</span>
     </button>
 
     <div class="nav-right">
@@ -606,12 +618,21 @@ function notify(msg){
 const SITE_URL = location.origin + location.pathname;
 /* Links in een e-mail wijzen naar een plek in de shop, niet naar de voorpagina.
    Alles zit achter een # zodat GitHub Pages er niets voor hoeft te kunnen. */
-const orderLink   = (o) => `${SITE_URL}#bestelling/${o.id}`;
-const confirmLink = (o) => `${SITE_URL}#ontvangen/${o.id}`;
+const orderLink   = (o) => `${SITE_URL}?bestelling=${encodeURIComponent(o.id)}`;
+const confirmLink = (o) => `${SITE_URL}?ontvangen=${encodeURIComponent(o.id)}`;
 
 /* Leest zo'n link uit en onthoudt waar we naartoe moeten. Het adres wordt
    daarna schoongeveegd, zodat herladen niet opnieuw dezelfde sprong maakt. */
 function leesLink(){
+  // Een gewone parameter (?bestelling=…) overleeft mailclients en doorstuurders
+  // beter dan een #-deel. Dat laatste blijven we lezen voor berichten die al
+  // verstuurd zijn.
+  const q = new URLSearchParams(location.search);
+  if (q.get("bestelling")) return { view: "account", orderId: q.get("bestelling") };
+  if (q.get("ontvangen"))  return { view: "account", orderId: q.get("ontvangen"), actie: "ontvangen" };
+  const p = q.get("pagina");
+  if (p && ["account","archief","custom","cart","shop","verifieer"].includes(p)) return { view: p };
+
   const h = decodeURIComponent(location.hash || "").replace(/^#/, "");
   if (!h) return null;
   const [wat, id] = h.split("/");
@@ -719,8 +740,16 @@ onAuthStateChanged(auth, async (u) => {
   render();
 });
 
+/* Wie zijn e-mailadres nog niet bevestigd heeft, komt niet verder dan het
+   bevestigingsscherm. Beheerders wel: anders zou jij voor je eigen deur staan
+   met een account van vóór deze regel. */
+function moetBevestigen(){
+  return !!state.user && !state.user.emailVerified && !state.profile?.isAdmin;
+}
+
 /* Na een herlaadbeurt mag een teruggezette pagina niet meer tonen dan mag. */
 function bewaakView(){
+  if (moetBevestigen()) { state.view = "verifieer"; return; }
   if (state.view === "admin" && !state.profile?.isAdmin) state.view = "shop";
   if (state.view === "account" && !state.user) state.view = "shop";
   bewaarView();
@@ -755,11 +784,28 @@ async function doRegister(name, email, password, address){
     const profile = { name, email, address, isAdmin: isAdminEmail(email), createdAt: Date.now() };
     await setDoc(doc(db, "users", cred.user.uid), profile);
     state.profile = profile;
+    // De luisteraar startte al vóór dit profiel er was en luistert dus als
+    // klant. Voor een beheerder is dat te weinig — opnieuw aanhaken.
+    if (profile.isAdmin) listenOrders();
     renderAuthNav();
+    // Een vers account is nooit bevestigd; is het dat toch al, dan hoeft het
+    // wachtscherm niet en kan iemand meteen door.
+    if (cred.user.emailVerified){
+      notify("Account aangemaakt — welkom " + name);
+      go("shop");
+      return;
+    }
     // Firebase stuurt zelf een bevestigingsmail; die is gratis en betrouwbaar.
     try{
       await sendEmailVerification(cred.user, { url: SITE_URL });
-      go("verifieer");
+      verstuurdeVerificatie.add(cred.user.uid);   // niet nog eens vanaf het wachtscherm
+      // De beheerder wordt niet tegengehouden — anders sta je voor je eigen deur.
+      if (profile.isAdmin){
+        notify("Account aangemaakt — bevestig je adres via de mail wanneer je wilt");
+        go("shop");
+      } else {
+        go("verifieer");
+      }
     }catch(e){
       notify("Account aangemaakt — welkom " + name);
       go("shop");
@@ -773,6 +819,7 @@ async function doRegister(name, email, password, address){
 async function doLogin(email, password){
   try{
     await signInWithEmailAndPassword(auth, email, password);
+    if (auth.currentUser && !auth.currentUser.emailVerified){ go("verifieer"); return; }
     notify("Ingelogd");
     go("shop");
   }catch(e){ notify("Fout: " + (e.message || e)); }
@@ -1955,6 +2002,7 @@ function listenOrders(){
       .sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
     state.ordersError = null;
     volgLink();
+    meldOnbekendeLink();
     if (state.view === "account" || state.view === "admin") render();
   }, (err) => {
     state.ordersError = err;
@@ -1971,17 +2019,46 @@ window.addEventListener("hashchange", () => {
   history.replaceState(null, "", SITE_URL);
   state.linkOrder = l.orderId || null;
   state.linkActie = l.actie || null;
-  if (l.orderId) volgLink(); else go(l.view);
+  if (!l.orderId){ go(l.view); return; }
+  volgLink();
+  meldOnbekendeLink();
 });
 
+/* Blijft de bestelling uit een link onvindbaar, dan hoort hij niet bij dit
+   account — een klant mag de bestelling van iemand anders namelijk niet eens
+   inlezen. We wachten wel even: vlak na het inloggen is de lijst nog onderweg. */
+let onbekendeLinkTimer = null;
+function meldOnbekendeLink(){
+  if (!state.linkOrder || !state.user || onbekendeLinkTimer) return;
+  onbekendeLinkTimer = setTimeout(() => {
+    onbekendeLinkTimer = null;
+    if (!state.linkOrder) return;
+    state.linkOrder = null; state.linkActie = null;
+    notify("Deze bestelling hoort niet bij dit account");
+  }, 6000);
+}
+
 /* Kwam iemand binnen via een link uit een bericht, dan zetten we hem op de
-   juiste bestelling en brengen die in beeld. */
+   juiste bestelling en brengen die in beeld.
+
+   Een link uit een bericht hoort bij één account. Klik je op de link uit het
+   bericht van iemand anders, dan mag die bestelling nooit tussen jouw eigen
+   bestellingen komen te staan. Voor een gewone klant is dat al dicht: hij kan
+   de bestelling niet eens inlezen. Als beheerder zie je wél alles — dan sturen
+   we je naar Shopbeheer, waar zulke bestellingen thuishoren. */
 function volgLink(){
   if (!state.linkOrder) return;
   const o = state.orders.find(x => x.id === state.linkOrder);
   if (!o) return;                                  // bestelling nog niet binnen
+  const vanMij = o.uid === state.user?.uid;
+  if (!vanMij && !state.profile?.isAdmin){
+    state.linkOrder = null; state.linkActie = null;
+    notify("Deze bestelling hoort niet bij dit account");
+    return;
+  }
   state.__openOrder = o.id;
-  state.view = "account";
+  state.view = vanMij ? "account" : "admin";
+  if (!vanMij) state.__adminTab = "orders";
   const actie = state.linkActie;
   state.linkOrder = null; state.linkActie = null;
   render();
@@ -1993,7 +2070,9 @@ function volgLink(){
       kaart.classList.add("aangewezen");
       setTimeout(() => kaart.classList.remove("aangewezen"), 2600);
     }
-    if (actie === "ontvangen" && o.status === "Geleverd" && !o.receivedAt){
+    if (!vanMij){
+      notify("Dit is de bestelling van " + (o.userEmail || "een klant") + " — geopend in Shopbeheer");
+    } else if (actie === "ontvangen" && o.status === "Geleverd" && !o.receivedAt){
       notify("Klik op Ontvangen om te bevestigen dat je pakket aangekomen is");
     }
   }, 120);
@@ -2071,7 +2150,7 @@ const MAIL_DOC = () => doc(db, "settings", "mail");
 const DEFAULT_MAIL = {
   serviceId: "", publicKey: "",
   tplOrder: "", tplShipped: "", tplDelivered: "",
-  fromName: "LayerCraft", replyTo: "",
+  fromName: "Extrudo", replyTo: "",
   // Elk bericht kost één van je maandelijkse tegoed. Zet uit wat je niet nodig
   // hebt, dan haal je meer bestellingen uit hetzelfde pakket.
   onOrder: true, onShipped: true, onDelivered: true,
@@ -2364,6 +2443,8 @@ function esc(s=""){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&
 
 /* --------------------------- render: views --------------------------- */
 function render(){
+  // ook bij een sprong vanuit het menu of een link blijft dit scherm staan
+  if (moetBevestigen() && state.view !== "verifieer") state.view = "verifieer";
   renderCartBadge();
   const app = document.getElementById('app');
   switch(state.view){
@@ -2956,7 +3037,7 @@ const UNITS = { mm: 1, cm: 10, inch: 25.4 };
    De instellingen zijn klein en gaan naar sessionStorage; de bestanden zelf
    zijn te groot daarvoor en gaan naar IndexedDB, één rij per onderdeel.
    ===================================================================== */
-const PARTS_DB = "layercraft", PARTS_STORE = "bestanden";
+const PARTS_DB = "extrudo", PARTS_STORE = "bestanden";
 function partsDb(){
   return new Promise((res, rej) => {
     if (!self.indexedDB) return rej(new Error("geen opslag"));
@@ -3786,15 +3867,48 @@ async function addJobToCart(btn){
 }
 
 /* De gekozen kleur per benoemd stuk, kort weergegeven. */
-function colorChoiceLine(it){
-  if (!Array.isArray(it.colorChoices) || !it.colorChoices.length) return "";
-  return `<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:3px;">
-    ${it.colorChoices.map(c => `
-      <span class="row" style="gap:4px;">
-        <span class="fil-chip ${finishClass(c.finish)}" style="width:11px;height:11px;border-radius:3px;background-color:${esc(c.hex||"#888")};"></span>
-        <span class="muted font-mono" style="font-size:10px;">${esc(c.slot)}: ${esc(c.name||"")}</span>
-      </span>`).join("")}
-  </div>`;
+/* Wat er in de winkelwagen onder de naam staat: één regel per ding, met een
+   kopje ervoor. Vroeger stond dit als één kleine grijze regel naast de
+   plusknop geperst — dan valt het weg zodra een naam wat langer is. */
+function kleurBol(f, k){
+  return `<span class="fil-chip ${finishClass(f.finish)}" style="background-color:${esc(f.hex || "#888")};"></span>
+          <span>${esc(k || f.name || "")}</span>`;
+}
+function wagenSpecs(it){
+  const regel = (sleutel, waarde) =>
+    `<div class="wagen-spec"><span class="sleutel">${esc(sleutel)}</span><span class="waarde">${waarde}</span></div>`;
+  const uit = [];
+
+  // één kleur voor het hele stuk
+  if (it.filament){
+    if (it.filament.type) uit.push(regel("Materiaal", esc(it.filament.type)));
+    uit.push(regel("Kleur", kleurBol(it.filament, it.filament.name)));
+  }
+
+  // een model met benoemde kleurvakken: mond geel, arm blauw
+  if (Array.isArray(it.colorChoices) && it.colorChoices.length){
+    for (const c of it.colorChoices){
+      uit.push(regel(c.slot || "Kleur",
+        kleurBol(c, [c.type, c.name].filter(Boolean).join(" · "))));
+    }
+  }
+
+  // een eigen opdracht met meerdere onderdelen
+  const delen = Array.isArray(it.jobParts) ? it.jobParts : [];
+  if (delen.length){
+    uit.push(regel("Onderdelen", delen.map(j => `
+      <span class="wagen-deel">
+        ${j.filament ? `<span class="fil-chip ${finishClass(j.filament.finish)}" style="background-color:${esc(j.filament.hex || "#888")};"></span>` : ``}
+        <span>${j.qty}× ${esc(j.name)}${j.filament
+          ? ` <span class="muted">— ${esc([j.filament.type, j.filament.name].filter(Boolean).join(" "))}</span>` : ``}</span>
+      </span>`).join("")));
+    uit.push(regel("Levering", it.assembled ? "In elkaar gezet" : "Los, per onderdeel"));
+  }
+
+  // De maat staat er alleen bij als de klant hem zelf gekozen heeft — bij
+  // maatwerk dus. Bij een geüpload model staat er geen maat in de regel.
+  if (it.dims) uit.push(regel("Maat", esc(it.dims.join(" × ")) + " mm"));
+  return uit.join("");
 }
 
 /* De vorm van het bijbehorende product, zodat het kleurvoorbeeld in de
@@ -3804,40 +3918,37 @@ function viewCart(){
     return `<div style="padding:32px 0;"><button class="back" onclick="go('shop')"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Verder winkelen</button><h1 class="font-display" style="font-size:22px;">Winkelwagen</h1><p class="muted">Je winkelwagen is leeg.</p></div>`;
   }
   const items = state.cart.map(it=>`
-    <div class="cart-item row between" style="margin-bottom:10px;">
-      <div class="row" style="flex:1;">
+    <div class="cart-item" style="margin-bottom:10px;">
+      <div class="wagen-kop">
         <div class="admin-thumb">${
           it.kind==='custom'
             ? `<i class="fa-solid fa-file-lines" aria-hidden="true"></i>`
             : productThumb(state.products.find(x=>x.id===(it.productId||it.id)) || {}, 18)
         }</div>
-        <div style="min-width:0;">
-          <div style="font-size:13px;">${esc(it.name)}</div>
-          ${it.filament ? `
-            <div class="row" style="gap:6px;margin-top:2px;">
-              <span class="fil-chip ${finishClass(it.filament.finish)}" style="width:13px;height:13px;border-radius:4px;background-color:${esc(it.filament.hex)};"></span>
-              <span class="muted font-mono" style="font-size:10px;">${esc(it.filament.type)} · ${esc(it.filament.name)}</span>
-            </div>` : ``}
-          ${it.dims ? `<div class="muted font-mono" style="font-size:10px;">${it.dims.join(" × ")} mm</div>` : ``}
-          ${Array.isArray(it.jobParts) && it.jobParts.length ? `
-            <div class="muted font-mono" style="font-size:10px;">
-              ${it.jobParts.map(j => `${j.qty}× ${esc(j.name)}`).join(" · ")}
-              ${it.assembled ? " · geassembleerd" : " · los geleverd"}
-            </div>` : ``}
-          ${colorChoiceLine(it)}
-          <div class="muted font-mono" style="font-size:11px;">
-            ${it.needsQuote ? "prijs op aanvraag"
-              : it.discountPct ? `<span class="was">${fmtEUR(it.listPrice)}</span>${fmtEUR(it.price)} / stuk <span class="sale-flag">&minus;${it.discountPct}%</span>`
-              : fmtEUR(it.price) + " / stuk"}
-          </div>
+        <div class="wagen-tekst">
+          <div class="wagen-naam">${esc(it.name)}</div>
+          <div class="wagen-specs">${wagenSpecs(it)}</div>
         </div>
       </div>
-      <div class="stepper">
-        <button onclick="window.__setQty('${it.id}','${it.kind}',${it.qty-1})"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
-        <span>${it.qty}</span>
-        <button onclick="window.__setQty('${it.id}','${it.kind}',${it.qty+1})"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+      <div class="wagen-voet">
+        <div class="wagen-prijs">
+          ${it.needsQuote
+            ? `<span class="muted">prijs op aanvraag</span>`
+            : `<span class="totaal">${fmtEUR(it.price * it.qty)}</span>
+               <span class="muted"> &middot; ${it.discountPct
+                 ? `<span class="was">${fmtEUR(it.listPrice)}</span>${fmtEUR(it.price)}`
+                 : fmtEUR(it.price)} per stuk</span>
+               ${it.discountPct ? `<span class="sale-flag" style="margin-left:6px;">&minus;${it.discountPct}%</span>` : ``}`}
+        </div>
+        <div class="row" style="gap:8px;">
+          <div class="stepper">
+            <button onclick="window.__setQty('${it.id}','${it.kind}',${it.qty-1})" aria-label="Eén minder"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
+            <span>${it.qty}</span>
+            <button onclick="window.__setQty('${it.id}','${it.kind}',${it.qty+1})" aria-label="Eén meer"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="window.__removeFromCart('${it.id}','${it.kind}')" title="Uit de winkelwagen" aria-label="Uit de winkelwagen"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+        </div>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="window.__removeFromCart('${it.id}','${it.kind}')"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
     </div>`).join("");
   return `
     <div style="padding:32px 0;max-width:480px;">
@@ -4067,26 +4178,18 @@ window.__toggleOrder = (id) => {
 
 function orderCard(o){
   const open = state.__openOrder === o.id;
+  // Dezelfde opbouw als in de winkelwagen: eerst wát het is, dan wat het kost.
   const lines = o.items.map(i=>`
-    <div class="order-line">
+    <div class="order-line" style="align-items:flex-start;">
       <div class="admin-thumb">${
         i.kind === 'custom' ? `<i class="fa-solid fa-file-lines" aria-hidden="true"></i>`
         : productThumb(state.products.find(p=>p.id===(i.productId||i.id)) || {}, 18) }</div>
-      <div style="flex:1;min-width:0;">
-        <div style="font-size:13px;">${esc(i.name)}</div>
-        ${i.filament ? `
-          <div class="row" style="gap:6px;margin-top:2px;">
-            <span class="fil-chip ${finishClass(i.filament.finish)}" style="width:12px;height:12px;border-radius:4px;background-color:${esc(i.filament.hex)};"></span>
-            <span class="muted font-mono" style="font-size:10px;">${esc(i.filament.type)} · ${esc(i.filament.name)}</span>
-          </div>` : ``}
-        ${i.dims ? `<div class="muted font-mono" style="font-size:10px;">${i.dims.join(" × ")} mm</div>` : ``}
-        ${Array.isArray(i.jobParts) && i.jobParts.length ? `
-          <div class="muted font-mono" style="font-size:10px;">
-            ${i.jobParts.map(j => `${j.qty}× ${esc(j.name)}`).join(" · ")}${i.assembled ? " · geassembleerd" : ""}
-          </div>` : ``}
-        <div class="muted font-mono" style="font-size:11px;">${i.qty} × ${fmtEUR(i.price)}</div>
+      <div class="wagen-tekst">
+        <div class="wagen-naam" style="font-size:14px;">${esc(i.name)}</div>
+        <div class="wagen-specs">${wagenSpecs(i)}</div>
+        <div class="muted font-mono" style="font-size:11px;margin-top:7px;">${i.qty} × ${fmtEUR(i.price)}</div>
       </div>
-      <span class="font-mono" style="font-size:12px;">${fmtEUR(i.price * i.qty)}</span>
+      <span class="font-mono" style="font-size:13px;font-weight:600;">${fmtEUR(i.price * i.qty)}</span>
     </div>`).join("");
   const a = o.shippingAddress || {};
   return `
@@ -4148,15 +4251,42 @@ function viewVerifieer(){
         <button class="btn btn-accent btn-sm" id="checkVerifyBtn">Ik heb geklikt</button>
       </div>
       <p class="muted" style="font-size:12px;margin:22px 0 0;">
-        <button class="detail-toggle" onclick="go('shop')" style="margin:0;">Later doen, naar de shop</button>
+        Verkeerd adres opgegeven? <button class="detail-toggle" onclick="window.__logout()" style="margin:0;">Uitloggen en opnieuw proberen</button>
       </p>
     </div>`;
 }
+let verifyTimer = null;
+/* Aan wie we deze sessie al een bevestigingsmail stuurden. Zonder dit zou wie
+   zich net aanmeldde er meteen twee krijgen. */
+const verstuurdeVerificatie = new Set();
 function attachVerifyHandlers(){
+  // Je klikt op de link in een ander tabblad of op je telefoon; daar hoort de
+  // shop niets van. Daarom vragen we het zelf om de paar tellen na.
+  clearInterval(verifyTimer);
+  if (state.user && !state.user.emailVerified){
+    verifyTimer = setInterval(async () => {
+      if (state.view !== "verifieer"){ clearInterval(verifyTimer); return; }
+      try{
+        await reload(state.user);
+        if (state.user.emailVerified){ clearInterval(verifyTimer); render(); }
+      }catch(e){ /* even geen verbinding; we proberen straks opnieuw */ }
+    }, 4000);
+    // Wie inlogt met een account van vóór deze regel heeft nog nooit een bericht
+    // gehad — dat sturen we één keer per bezoek vanzelf. Tijdens het registreren
+    // niet: doRegister doet dat zelf, en dit scherm verschijnt al vóór die regel.
+    if (!registering && !verstuurdeVerificatie.has(state.user.uid)){
+      verstuurdeVerificatie.add(state.user.uid);
+      sendEmailVerification(state.user, { url: SITE_URL }).catch(()=>{});
+    }
+  }
   const opnieuw = document.getElementById('resendVerifyBtn');
   if (opnieuw) opnieuw.onclick = async () => {
     opnieuw.disabled = true;
-    try{ await sendEmailVerification(state.user, { url: SITE_URL }); notify("Bericht opnieuw verstuurd"); }
+    try{
+      verstuurdeVerificatie.add(state.user.uid);
+      await sendEmailVerification(state.user, { url: SITE_URL });
+      notify("Bericht opnieuw verstuurd");
+    }
     catch(e){ notify("Versturen mislukt: " + (e.message || e)); opnieuw.disabled = false; }
     setTimeout(() => { opnieuw.disabled = false; }, 4000);
   };
@@ -4176,9 +4306,12 @@ function viewAccount(){
   }
   const a = state.profile?.address || {};
   const naam = state.profile?.name || (state.user.email || "").split("@")[0];
-  const actief = state.orders.filter(o => o.status !== "Geleverd" && !o.hiddenForUser);
-  const afgerond = state.orders.filter(o => o.status === "Geleverd" && !o.hiddenForUser);
-  const verborgen = state.orders.filter(o => o.hiddenForUser).length;
+  // Alleen wat van dit account is. Als beheerder haalt de shop álle
+  // bestellingen op voor Shopbeheer — die horen hier niet tussen te staan.
+  const mijne = state.orders.filter(o => o.uid === state.user.uid);
+  const actief = mijne.filter(o => o.status !== "Geleverd" && !o.hiddenForUser);
+  const afgerond = mijne.filter(o => o.status === "Geleverd" && !o.hiddenForUser);
+  const verborgen = mijne.filter(o => o.hiddenForUser).length;
   return `
     <div style="padding:32px 0;max-width:520px;">
       <h1 class="font-display" style="font-size:22px;margin-bottom:2px;">Hallo, ${esc(naam)}</h1>
@@ -4186,6 +4319,11 @@ function viewAccount(){
       ${state.profile?.isAdmin ? `<span class="badge badge-accent">Beheerder</span>` : ``}
       ${a.street ? `<p class="muted" style="font-size:12px;margin:8px 0 0;">${esc(a.street)}, ${esc(a.zip||'')} ${esc(a.city||'')}</p>` : ``}
       ${state.profileError ? `<p class="muted" style="font-size:12px;margin-top:8px;color:var(--accent);">Je profielgegevens konden niet geladen worden — je blijft wel ingelogd.</p>` : ``}
+      ${state.user && !state.user.emailVerified && state.profile?.isAdmin ? `
+        <p class="muted" style="font-size:12px;margin-top:8px;">
+          Je eigen adres is nog niet bevestigd. Als beheerder mag je door, maar
+          <button class="detail-toggle" onclick="go('verifieer')" style="margin:0;">bevestig het gerust even</button>.
+        </p>` : ``}
       ${state.ordersError ? `
         <div class="cart-item" style="border-color:var(--accent);margin-top:14px;">
           <p style="font-size:13px;margin:0 0 6px;color:var(--accent);font-weight:600;">Je bestellingen konden niet geladen worden</p>
@@ -4250,11 +4388,20 @@ function slotAdminBlock(ed){
    overzicht is gehaald: op datum gesorteerd, doorzoekbaar op naam of nummer,
    en te filteren op status.
    ===================================================================== */
+function archiefTotaal(){
+  return state.profile?.isAdmin
+    ? state.orders.length
+    : state.orders.filter(o => o.uid === state.user?.uid).length;
+}
 function archiefRijen(){
   const zoek = (state.__archZoek || "").trim().toLowerCase();
   const status = state.__archStatus || "alles";
   const oud = state.__archOud === true;
-  return state.orders
+  // Als beheerder staat hier alles; als klant alleen wat van jou is.
+  const bron = state.profile?.isAdmin
+    ? state.orders
+    : state.orders.filter(o => o.uid === state.user?.uid);
+  return bron
     .filter(o => status === "alles" ? true : o.status === status)
     .filter(o => {
       if (!zoek) return true;
@@ -4289,7 +4436,7 @@ function viewArchief(){
             <button class="fil-type ${x===status?'active':''}" data-archstatus="${esc(x)}">${esc(x === "alles" ? "Alles" : x)}</button>`).join("")}
         </div>
         <div class="between" style="margin-top:10px;">
-          <span class="muted font-mono" style="font-size:11px;">${rijen.length} van ${state.orders.length}</span>
+          <span class="muted font-mono" style="font-size:11px;">${rijen.length} van ${archiefTotaal()}</span>
           <button class="btn btn-ghost btn-sm" id="archSort">
             ${ic(state.__archOud ? "arrow-up-1-9" : "arrow-down-9-1")} ${state.__archOud ? "Oudste eerst" : "Nieuwste eerst"}
           </button>
@@ -4357,7 +4504,7 @@ function viewAdmin(){
       </div>
     </div>`).join("");
   const orderRow = (o)=>`
-    <div class="admin-row" style="margin-bottom:10px;${o.receivedAt ? 'border-left:3px solid var(--accent);' : ''}">
+    <div class="admin-row" data-order="${esc(o.id)}" style="margin-bottom:10px;${o.receivedAt ? 'border-left:3px solid var(--accent);' : ''}">
       <div class="order-head">
         <div class="order-meta">
           <div style="font-size:13px;font-weight:600;word-break:break-word;">${esc(o.userEmail)}</div>
@@ -4773,7 +4920,7 @@ const MAIL_FIELDS = [
   ["tplDelivered","Sjabloon: geleverd, graag bevestigen", "template_xxxxxxx"],
   ["tplAdmin",    "Sjabloon: seintje naar jezelf", "template_xxxxxxx"],
   ["adminEmail",  "Jouw adres voor het seintje", "jelle@mattan.be"],
-  ["fromName",    "Afzendernaam", "LayerCraft"],
+  ["fromName",    "Afzendernaam", "Extrudo"],
   ["replyTo",     "Antwoordadres", "jelle@mattan.be"],
 ];
 function mailAdminBlock(){

@@ -46,7 +46,7 @@ shop stuurt bij elk bericht zijn eigen kop, inleiding en knoptekst mee. **Eén
 sjabloon volstaat dus voor alle drie de berichten.**
 
 1. Klik links op **Email Templates** → **Create New Template**.
-2. Geef hem bovenaan een naam, bijvoorbeeld `LayerCraft bericht`.
+2. Geef hem bovenaan een naam, bijvoorbeeld `Extrudo bericht`.
 3. Vul het tabblad **Settings** in — dit is het stukje dat het vaakst misgaat:
 
    | Veld | Wat je invult |
@@ -64,7 +64,7 @@ sjabloon volstaat dus voor alle drie de berichten.**
 
 ```html
 <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#15171b;">
-  <p style="font-family:monospace;font-size:11px;letter-spacing:.18em;color:#8a8f98;margin:0 0 18px;">LAYERCRAFT</p>
+  <p style="font-family:monospace;font-size:11px;letter-spacing:.18em;color:#8a8f98;margin:0 0 18px;">EXTRUDO</p>
 
   <h1 style="font-size:22px;margin:0 0 10px;">{{mail_title}}</h1>
   <p style="font-size:15px;line-height:1.6;margin:0 0 20px;">Hallo {{to_name}}, {{mail_intro}}</p>
@@ -92,7 +92,7 @@ sjabloon volstaat dus voor alle drie de berichten.**
   <p style="font-size:14px;white-space:pre-line;margin:0 0 22px;">{{address}}</p>
 
   <p style="font-size:12px;color:#8a8f98;border-top:1px solid #e3e1db;padding-top:14px;margin:0;">
-    LayerCraft &middot; Lebbeke, België &middot; <a href="{{site_url}}" style="color:#8a8f98;">{{site_url}}</a>
+    Extrudo &middot; Lebbeke, België &middot; <a href="{{site_url}}" style="color:#8a8f98;">{{site_url}}</a>
   </p>
 </div>
 ```
@@ -127,7 +127,7 @@ In stap 6 zet je de beveiliging aan die daarbij hoort.
    | Sjabloon: bestelbevestiging | uit stap 2, `template_…` |
    | Sjabloon: verzonden | **dezelfde** `template_…` |
    | Sjabloon: geleverd, graag bevestigen | **dezelfde** `template_…` |
-   | Afzendernaam | LayerCraft |
+   | Afzendernaam | Extrudo |
    | Antwoordadres | jelle@mattan.be |
 
    Ja, drie keer dezelfde sjabloon-ID. De shop zorgt zelf voor de juiste kop en
