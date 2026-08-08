@@ -2094,17 +2094,84 @@ function nearestFilament(hex){
    meerdere objecten, dan hoort object 1 bij kleurvak 1, object 2 bij vak 2 —
    precies zoals je het in Bambu Studio klaarzet.
    ===================================================================== */
-const VOORBEELD_DRIEHOEKEN = 9000;   // samen over alle onderdelen
+const VOORBEELD_DRIEHOEKEN = 26000;   // samen over alle onderdelen
 
-/* Dunt uit tot er hooguit `houd` driehoeken over zijn. */
-function dunUit(mesh, houd){
+/* Vereenvoudigt een model door punten die dicht bij elkaar liggen op één punt
+   te leggen: het model gaat over een denkbeeldig rooster en alle punten in
+   hetzelfde vakje worden één punt. Driehoeken blijven zo aan elkaar vastzitten
+   en het oppervlak blijft dicht — je houdt een massief lichaam over.
+
+   Zomaar elke zoveelste driehoek weglaten werkt niet: dan blijven er losse
+   driehoeken over met gaten ertussen, en dat ziet eruit als een kluwen draden.
+   Precies dat ging hier eerder mis. */
+function roosterVereenvoudig(mesh, vakken){
+  const n = mesh.length / 9;
+  const min = [Infinity,Infinity,Infinity], max = [-Infinity,-Infinity,-Infinity];
+  for (let o = 0; o < mesh.length; o += 3){
+    for (let d = 0; d < 3; d++){
+      const v = mesh[o+d];
+      if (v < min[d]) min[d] = v;
+      if (v > max[d]) max[d] = v;
+    }
+  }
+  const span = Math.max(max[0]-min[0], max[1]-min[1], max[2]-min[2]) || 1;
+  const cel = span / vakken;
+  const nx = Math.max(1, Math.ceil((max[0]-min[0]) / cel) + 1);
+  const ny = Math.max(1, Math.ceil((max[1]-min[1]) / cel) + 1);
+  const nz = Math.max(1, Math.ceil((max[2]-min[2]) / cel) + 1);
+  if (nx * ny * nz > 12_000_000) return mesh;      // te fijn om te doen
+
+  // eerst per vakje het zwaartepunt van de punten die erin vallen: dat geeft
+  // een vloeiender vorm dan het midden van het vakje
+  const som = new Float64Array(nx*ny*nz*3), tel = new Uint32Array(nx*ny*nz);
+  const vak = (x,y,z) =>
+    Math.min(nx-1, Math.floor((x-min[0])/cel)) +
+    Math.min(ny-1, Math.floor((y-min[1])/cel)) * nx +
+    Math.min(nz-1, Math.floor((z-min[2])/cel)) * nx * ny;
+  const vakVan = new Uint32Array(n * 3);
+  for (let t = 0; t < n; t++){
+    for (let k = 0; k < 3; k++){
+      const o = t*9 + k*3;
+      const c = vak(mesh[o], mesh[o+1], mesh[o+2]);
+      vakVan[t*3+k] = c;
+      som[c*3] += mesh[o]; som[c*3+1] += mesh[o+1]; som[c*3+2] += mesh[o+2];
+      tel[c]++;
+    }
+  }
+
+  // dan de driehoeken opnieuw opbouwen; een driehoek met twee punten in
+  // hetzelfde vakje is platgedrukt en kan weg
+  const uit = new Float32Array(n * 9);
+  let w = 0;
+  for (let t = 0; t < n; t++){
+    const a = vakVan[t*3], b = vakVan[t*3+1], c = vakVan[t*3+2];
+    if (a === b || b === c || a === c) continue;
+    for (const q of [a, b, c]){
+      uit[w++] = som[q*3] / tel[q];
+      uit[w++] = som[q*3+1] / tel[q];
+      uit[w++] = som[q*3+2] / tel[q];
+    }
+  }
+  return uit.subarray(0, w);
+}
+
+/* Vereenvoudigt tot er ongeveer `houd` driehoeken over zijn: fijner rooster
+   geeft er meer, grover minder. Een paar stappen volstaat om in de buurt te
+   komen. */
+function vereenvoudigTot(mesh, houd){
   const n = mesh.length / 9;
   if (n <= houd) return mesh;
-  const step = Math.ceil(n / houd);
-  const out = new Float32Array(Math.ceil(n / step) * 9);
-  let w = 0;
-  for (let i = 0; i < n; i += step){ out.set(mesh.subarray(i*9, i*9+9), w); w += 9; }
-  return out.subarray(0, w);
+  let laag = 12, hoog = 320, beste = null;
+  for (let ronde = 0; ronde < 7; ronde++){
+    const vakken = Math.round((laag + hoog) / 2);
+    const uit = roosterVereenvoudig(mesh, vakken);
+    const m = uit.length / 9;
+    if (m <= houd){ beste = uit; laag = vakken; } else { hoog = vakken; }
+    if (hoog - laag <= 2) break;
+  }
+  // Lukt het met geen enkel rooster, dan is het model zo fijn dat zelfs het
+  // grofste te veel oplevert; neem dan het grofste dat we hebben.
+  return beste || roosterVereenvoudig(mesh, 12);
 }
 
 /* Alle onderdelen delen één omhullende doos, anders schuiven ze uit elkaar. */
@@ -2128,7 +2195,7 @@ function voorbeeldUitDelen(delen){
     min, span,
     size: [max[0]-min[0], max[1]-min[1], max[2]-min[2]],
     parts: ruw.map((m, i) => {
-      const dun = dunUit(m, Math.max(60, Math.floor(m.length/9 * factor)));
+      const dun = vereenvoudigTot(m, Math.max(400, Math.floor(m.length/9 * factor)));
       const u = new Uint16Array(dun.length);
       for (let o = 0; o < dun.length; o += 3){
         for (let d = 0; d < 3; d++){
@@ -2228,7 +2295,10 @@ async function analyzeFile(file, sleutel){
 /* Zet het canvas klaar en levert de projectie: één plek waar de hoek, de
    schaal en het plaatraster geregeld worden, voor beide weergaven. */
 function meshCanvas(canvas, geo, opts){
-  const { yaw = 0.6, pitch = 0.5, plate = true, scale = 1 } = opts || {};
+  // vul: hoeveel van het vak het model mag innemen. Op de plaat houden we
+  // ruimte over zodat je ziet hoe groot het ding werkelijk is; bij een
+  // productfoto mag het model het beeld gewoon vullen.
+  const { yaw = 0.6, pitch = 0.5, plate = true, scale = 1, vul = 0.36, zak = 0.10 } = opts || {};
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const w = canvas.clientWidth || 320, h = canvas.clientHeight || 320;
   canvas.width = Math.round(w * dpr);
@@ -2243,8 +2313,8 @@ function meshCanvas(canvas, geo, opts){
   const cx = geo.center[0] * scale, cyy = geo.center[1] * scale;
   const minZ = geo.minZ * scale;
   const span = Math.max(geo.size[0], geo.size[1], geo.size[2]) * scale || 1;
-  const zoom = Math.min(w, h) * 0.36 / span;
-  const ox = w / 2, oy = h / 2 + Math.min(w, h) * 0.10;
+  const zoom = Math.min(w, h) * vul / span;
+  const ox = w / 2, oy = h / 2 + Math.min(w, h) * zak;
 
   // z omhoog, y naar achter — zoals een print op een plaat staat
   function project(x, y, z){
@@ -2368,7 +2438,7 @@ function drawMesh(canvas, geo, opts){
 function drawModel(canvas, meshes, kleuren, opts){
   const o = opts || {};
   const geo = { center: o.center, size: o.size, minZ: o.minZ };
-  const c = meshCanvas(canvas, geo, { ...o, plate: false });
+  const c = meshCanvas(canvas, geo, { ...o, plate: false, vul: 0.58, zak: 0 });
   if (!c) return;
   const { g, project, cy, sy } = c;
   const light = [0.42, -0.55, 0.72];
@@ -3544,7 +3614,9 @@ async function toon3dVoorbeeld(){
 
   const teken = () => drawModel(cv, meshes, kleuren, {
     center: [v.min[0] + v.size[0]/2, v.min[1] + v.size[1]/2, 0],
-    size: v.size, minZ: v.min[2],
+    // Op de plaat staat een model op zijn onderkant; hier hoort het gewoon
+    // midden in beeld, dus draaien we om het midden in plaats van om de voet.
+    size: v.size, minZ: v.min[2] + v.size[2] / 2,
     yaw: state.__meshView.yaw, pitch: state.__meshView.pitch,
   });
   teken();
