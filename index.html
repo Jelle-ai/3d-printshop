@@ -490,7 +490,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  onAuthStateChanged, signOut, sendEmailVerification, reload
+  onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, collection, doc, setDoc, getDoc, addDoc, updateDoc, deleteDoc,
@@ -631,14 +631,14 @@ function leesLink(){
   if (q.get("bestelling")) return { view: "account", orderId: q.get("bestelling") };
   if (q.get("ontvangen"))  return { view: "account", orderId: q.get("ontvangen"), actie: "ontvangen" };
   const p = q.get("pagina");
-  if (p && ["account","archief","custom","cart","shop","verifieer"].includes(p)) return { view: p };
+  if (p && ["account","archief","custom","cart","shop"].includes(p)) return { view: p };
 
   const h = decodeURIComponent(location.hash || "").replace(/^#/, "");
   if (!h) return null;
   const [wat, id] = h.split("/");
   if (wat === "bestelling" && id) return { view: "account", orderId: id };
   if (wat === "ontvangen" && id) return { view: "account", orderId: id, actie: "ontvangen" };
-  if (["account","archief","custom","cart","shop","verifieer"].includes(wat)) return { view: wat };
+  if (["account","archief","custom","cart","shop"].includes(wat)) return { view: wat };
   return null;
 }
 const __link = leesLink();
@@ -664,8 +664,6 @@ let state = {
   // bestellingen binnen zijn
   linkOrder: __link?.orderId || null,
   linkActie: __link?.actie || null,
-  // waarom de bevestigingsmail niet vertrok, als dat gebeurt
-  verifyFout: null,
   products: [],
   productsLoaded: false,
   productsError: null,
@@ -742,16 +740,8 @@ onAuthStateChanged(auth, async (u) => {
   render();
 });
 
-/* Wie zijn e-mailadres nog niet bevestigd heeft, komt niet verder dan het
-   bevestigingsscherm. Beheerders wel: anders zou jij voor je eigen deur staan
-   met een account van vóór deze regel. */
-function moetBevestigen(){
-  return !!state.user && !state.user.emailVerified && !state.profile?.isAdmin;
-}
-
 /* Na een herlaadbeurt mag een teruggezette pagina niet meer tonen dan mag. */
 function bewaakView(){
-  if (moetBevestigen()) { state.view = "verifieer"; return; }
   if (state.view === "admin" && !state.profile?.isAdmin) state.view = "shop";
   if (state.view === "account" && !state.user) state.view = "shop";
   bewaarView();
@@ -790,25 +780,8 @@ async function doRegister(name, email, password, address){
     // klant. Voor een beheerder is dat te weinig — opnieuw aanhaken.
     if (profile.isAdmin) listenOrders();
     renderAuthNav();
-    // Een vers account is nooit bevestigd; is het dat toch al, dan hoeft het
-    // wachtscherm niet en kan iemand meteen door.
-    if (cred.user.emailVerified){
-      notify("Account aangemaakt — welkom " + name);
-      go("shop");
-      return;
-    }
-    // Firebase stuurt zelf een bevestigingsmail; die is gratis en betrouwbaar.
-    verstuurdeVerificatie.add(cred.user.uid);     // niet nog eens vanaf het wachtscherm
-    const uitslag = await stuurBevestiging(cred.user);
-    // De beheerder wordt niet tegengehouden — anders sta je voor je eigen deur.
-    if (profile.isAdmin){
-      notify(uitslag.ok
-        ? "Account aangemaakt — bevestig je adres via de mail wanneer je wilt"
-        : "Account aangemaakt, maar de bevestigingsmail vertrok niet");
-      go(uitslag.ok ? "shop" : "verifieer");
-    } else {
-      go("verifieer");
-    }
+    notify("Account aangemaakt — welkom " + name);
+    go("shop");
   }catch(e){
     notify("Fout: " + (e.message || e));
   }finally{
@@ -818,7 +791,6 @@ async function doRegister(name, email, password, address){
 async function doLogin(email, password){
   try{
     await signInWithEmailAndPassword(auth, email, password);
-    if (auth.currentUser && !auth.currentUser.emailVerified){ go("verifieer"); return; }
     notify("Ingelogd");
     go("shop");
   }catch(e){ notify("Fout: " + (e.message || e)); }
@@ -2253,7 +2225,7 @@ async function mailBestelling(o){
     action_url: orderLink(o),
     action_label: "Bekijk je bestelling",
   });
-  if (!r.ok && r.reason !== "niet ingesteld") console.warn("bevestigingsmail niet verstuurd:", r.reason);
+  if (!r.ok && r.reason !== "niet ingesteld") console.warn("bestelbevestiging niet verstuurd:", r.reason);
 }
 async function mailVerzonden(o){
   const w = deliveryWindow(o);
@@ -2442,8 +2414,6 @@ function esc(s=""){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&
 
 /* --------------------------- render: views --------------------------- */
 function render(){
-  // ook bij een sprong vanuit het menu of een link blijft dit scherm staan
-  if (moetBevestigen() && state.view !== "verifieer") state.view = "verifieer";
   renderCartBadge();
   const app = document.getElementById('app');
   switch(state.view){
@@ -2455,7 +2425,6 @@ function render(){
     case "payment": app.innerHTML = viewPayment(); attachPaymentHandlers(); return;
     case "login": app.innerHTML = viewAuth(state.__authMode || "login"); attachAuthHandlers(); return;
     case "account": app.innerHTML = viewAccount(); attachShopHandlers(); return;
-    case "verifieer": app.innerHTML = viewVerifieer(); attachVerifyHandlers(); return;
     case "archief": app.innerHTML = viewArchief(); attachArchiefHandlers(); return;
     case "admin": app.innerHTML = viewAdmin(); attachAdminHandlers(); return;
   }
@@ -4222,141 +4191,6 @@ function orderCard(o){
     </div>`;
 }
 
-/* Meteen na het aanmaken van een account: één scherm dat vraagt om de link in
-   de e-mail aan te klikken. Daarna komt de shop er niet meer op terug. */
-function viewVerifieer(){
-  const u = state.user;
-  if (!u) return `<div style="padding:32px 0;"><p class="muted">Je bent niet ingelogd.</p></div>`;
-  if (u.emailVerified) return `
-    <div style="padding:48px 0;max-width:440px;margin:0 auto;text-align:center;">
-      <p style="font-size:34px;margin:0 0 10px;color:var(--accent);">${ic("circle-check")}</p>
-      <h1 class="font-display" style="font-size:22px;margin:0 0 8px;">Je adres is bevestigd</h1>
-      <p class="muted" style="font-size:14px;margin:0 0 20px;">Alles staat klaar. Veel plezier.</p>
-      <button class="btn btn-accent" onclick="go('shop')">Naar de shop</button>
-    </div>`;
-  return `
-    <div style="padding:48px 0;max-width:440px;margin:0 auto;text-align:center;">
-      <p style="font-size:34px;margin:0 0 10px;color:var(--accent);">${ic("envelope")}</p>
-      <h1 class="font-display" style="font-size:22px;margin:0 0 10px;">Klik op de link in je e-mail</h1>
-      <p style="font-size:15px;line-height:1.6;margin:0 0 6px;">
-        We stuurden zonet een bericht naar <strong>${esc(u.email || "")}</strong>.
-      </p>
-      <p class="muted" style="font-size:13px;line-height:1.6;margin:0 0 24px;">
-        Klik op de link erin om je adres te bevestigen. Zo weten we zeker dat we je kunnen
-        bereiken over je bestelling. Niets gekregen? Kijk even bij je ongewenste post.
-      </p>
-      ${state.verifyFout ? `
-        <div class="cart-item" style="border-color:var(--accent);text-align:left;margin-bottom:20px;">
-          <p style="font-size:13px;margin:0 0 6px;color:var(--accent);font-weight:600;">
-            Er is geen bericht vertrokken
-          </p>
-          <p style="font-size:13px;line-height:1.55;margin:0 0 8px;">${esc(state.verifyFout.kort)}</p>
-          ${state.profile?.isAdmin ? `
-            <p class="muted" style="font-size:12px;line-height:1.55;margin:0;">${esc(state.verifyFout.doen)}</p>`
-          : `<p class="muted" style="font-size:12px;line-height:1.55;margin:0;">
-              Dit ligt niet aan jou. Laat het ons even weten, dan zetten we het recht.
-            </p>`}
-        </div>` : ``}
-      <div class="row" style="justify-content:center;">
-        <button class="btn btn-ghost btn-sm" id="resendVerifyBtn">Opnieuw sturen</button>
-        <button class="btn btn-accent btn-sm" id="checkVerifyBtn">Ik heb geklikt</button>
-      </div>
-      <p class="muted" style="font-size:12px;margin:22px 0 0;">
-        Verkeerd adres opgegeven? <button class="detail-toggle" onclick="window.__logout()" style="margin:0;">Uitloggen en opnieuw proberen</button>
-      </p>
-    </div>`;
-}
-let verifyTimer = null;
-/* Aan wie we deze sessie al een bevestigingsmail stuurden. Zonder dit zou wie
-   zich net aanmeldde er meteen twee krijgen. */
-const verstuurdeVerificatie = new Set();
-
-/* Waarom een bevestigingsmail niet vertrok — in gewone taal, met wat je eraan
-   doet. Vroeger slikte de shop deze fouten stil op: je zag "account
-   aangemaakt" en verder niets, terwijl er nooit post kwam. */
-function bevestigHint(e){
-  const code = (e && (e.code || e.message)) || "";
-  if (/unauthorized-continue-uri|invalid-continue-uri/.test(code)) return {
-    kort: "Het adres van deze site staat niet in de lijst van Firebase.",
-    doen: "Firebase-console → Authentication → Settings → Authorized domains → Add domain → " +
-          location.hostname + " → opslaan. Daarna werkt het meteen.",
-  };
-  if (/too-many-requests/.test(code)) return {
-    kort: "Firebase heeft even genoeg berichten verstuurd naar dit adres.",
-    doen: "Wacht een kwartiertje en probeer het dan opnieuw.",
-  };
-  if (/operation-not-allowed|configuration-not-found/.test(code)) return {
-    kort: "Inloggen met e-mail staat nog uit in Firebase.",
-    doen: "Firebase-console → Authentication → Sign-in method → Email/Password aanzetten.",
-  };
-  if (/network-request-failed/.test(code)) return {
-    kort: "Geen verbinding met Firebase.",
-    doen: "Kijk je internetverbinding na en probeer opnieuw.",
-  };
-  return { kort: "Firebase gaf een fout terug.", doen: String(code || e) };
-}
-
-/* Versturen met een terugkeerlink lukt alleen als het adres van deze site in
-   Firebase als toegestaan domein staat. Staat het er niet in, dan sturen we het
-   bericht zonder die link: Firebase gebruikt dan zijn eigen pagina en het adres
-   wordt evengoed bevestigd. Zo komt er altijd post, ook als er in de console nog
-   niets is klaargezet. */
-async function stuurBevestiging(user){
-  try{
-    await sendEmailVerification(user, { url: SITE_URL });
-    state.verifyFout = null;
-    return { ok: true };
-  }catch(e){
-    if (/continue-uri/.test((e && (e.code || e.message)) || "")){
-      try{
-        await sendEmailVerification(user);       // zonder terugkeerlink
-        state.verifyFout = null;
-        return { ok: true, zonderLink: true };
-      }catch(e2){ e = e2; }
-    }
-    state.verifyFout = bevestigHint(e);
-    return { ok: false, fout: e };
-  }
-}
-function attachVerifyHandlers(){
-  // Je klikt op de link in een ander tabblad of op je telefoon; daar hoort de
-  // shop niets van. Daarom vragen we het zelf om de paar tellen na.
-  clearInterval(verifyTimer);
-  if (state.user && !state.user.emailVerified){
-    verifyTimer = setInterval(async () => {
-      if (state.view !== "verifieer"){ clearInterval(verifyTimer); return; }
-      try{
-        await reload(state.user);
-        if (state.user.emailVerified){ clearInterval(verifyTimer); render(); }
-      }catch(e){ /* even geen verbinding; we proberen straks opnieuw */ }
-    }, 4000);
-    // Wie inlogt met een account van vóór deze regel heeft nog nooit een bericht
-    // gehad — dat sturen we één keer per bezoek vanzelf. Tijdens het registreren
-    // niet: doRegister doet dat zelf, en dit scherm verschijnt al vóór die regel.
-    if (!registering && !verstuurdeVerificatie.has(state.user.uid)){
-      verstuurdeVerificatie.add(state.user.uid);
-      stuurBevestiging(state.user).then(r => { if (!r.ok) render(); });
-    }
-  }
-  const opnieuw = document.getElementById('resendVerifyBtn');
-  if (opnieuw) opnieuw.onclick = async () => {
-    opnieuw.disabled = true;
-    verstuurdeVerificatie.add(state.user.uid);
-    const r = await stuurBevestiging(state.user);
-    notify(r.ok ? "Bericht opnieuw verstuurd" : "Versturen mislukt: " + state.verifyFout.kort);
-    if (!r.ok) render();
-    setTimeout(() => { opnieuw.disabled = false; }, 4000);
-  };
-  const na = document.getElementById('checkVerifyBtn');
-  if (na) na.onclick = async () => {
-    try{
-      await reload(state.user);
-      if (state.user.emailVerified) render();
-      else notify("Nog niet bevestigd — klik eerst op de link in de mail");
-    }catch(e){ notify("Nakijken mislukt: " + (e.message || e)); }
-  };
-}
-
 function viewAccount(){
   if (!state.user){
     return `<div style="padding:32px 0;"><p class="muted">Je bent niet ingelogd.</p><button class="btn btn-accent" onclick="go('login')">Inloggen</button></div>`;
@@ -4376,11 +4210,6 @@ function viewAccount(){
       ${state.profile?.isAdmin ? `<span class="badge badge-accent">Beheerder</span>` : ``}
       ${a.street ? `<p class="muted" style="font-size:12px;margin:8px 0 0;">${esc(a.street)}, ${esc(a.zip||'')} ${esc(a.city||'')}</p>` : ``}
       ${state.profileError ? `<p class="muted" style="font-size:12px;margin-top:8px;color:var(--accent);">Je profielgegevens konden niet geladen worden — je blijft wel ingelogd.</p>` : ``}
-      ${state.user && !state.user.emailVerified && state.profile?.isAdmin ? `
-        <p class="muted" style="font-size:12px;margin-top:8px;">
-          Je eigen adres is nog niet bevestigd. Als beheerder mag je door, maar
-          <button class="detail-toggle" onclick="go('verifieer')" style="margin:0;">bevestig het gerust even</button>.
-        </p>` : ``}
       ${state.ordersError ? `
         <div class="cart-item" style="border-color:var(--accent);margin-top:14px;">
           <p style="font-size:13px;margin:0 0 6px;color:var(--accent);font-weight:600;">Je bestellingen konden niet geladen worden</p>

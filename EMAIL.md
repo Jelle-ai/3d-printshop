@@ -1,19 +1,15 @@
 # E-mail instellen
 
-Je site stuurt vier soorten berichten:
+Je site stuurt drie soorten berichten naar de klant, plus een seintje naar
+jezelf bij elke nieuwe bestelling:
 
 | Wanneer | Wat de klant krijgt |
 | --- | --- |
-| Account aanmaken | Een link om zijn e-mailadres te bevestigen |
 | Bestelling geplaatst | Bevestiging met alles wat hij besteld heeft |
 | Jij zet op *Verzonden* | Bericht dat het onderweg is, met de verwachte dagen |
 | Jij zet op *Geleverd* | Vraag om op de site op **Ontvangen** te klikken |
 
-**Het eerste komt van Firebase zelf**, niet van EmailJS. Je hoeft daar dus geen
-sjabloon voor te maken — Firebase heeft er al een. Komt hij niet aan, kijk dan
-onderaan bij *[Er komt geen bevestigingsmail](#er-komt-geen-bevestigingsmail)*.
-
-Voor de andere drie heb je EmailJS nodig. Waarom: een website kan zelf geen
+Daar heb je EmailJS voor nodig. Waarom: een website kan zelf geen
 post versturen — daar hoort een server bij, en die heb je niet. EmailJS is
 gemaakt om vanuit de browser te versturen. Gratis tot 200 berichten per maand.
 
@@ -206,48 +202,3 @@ alleen geen post. Je kunt dit dus rustig later doen.
 | `{{confirm_url}}` | Alleen bij *geleverd*: de link om ontvangst te bevestigen |
 | `{{from_name}}` `{{reply_to}}` | Wat je bij Shopbeheer invulde |
 
----
-
-## Er komt geen bevestigingsmail
-
-Dit bericht komt van **Firebase**, niet van EmailJS. Maak er dus geen sjabloon
-voor aan bij EmailJS — dat helpt niet en kost je een van je twee gratis
-sjablonen. Loop in plaats daarvan deze vier dingen na.
-
-**De shop zegt het nu zelf.** Vertrekt er niets, dan staat de reden op het
-wachtscherm, en als jij bent ingelogd staat erbij wat je moet klikken. Zie je
-daar niets staan, dan is het bericht wél verstuurd en zit het probleem bij de
-mailbox — kijk bij je ongewenste post.
-
-### 1. Staat inloggen met e-mail aan?
-
-Firebase-console → **Authentication** → **Sign-in method** → **Email/Password**
-moet op *Enabled* staan. Staat hij uit, dan vertrekt er nooit iets.
-
-### 2. Staat het adres van je site in de lijst?
-
-Firebase-console → **Authentication** → **Settings** → **Authorized domains** →
-**Add domain** → `jelle-ai.github.io` → opslaan.
-
-Firebase zet daar vanzelf alleen `localhost` en zijn eigen adressen in. Staat
-jouw adres er niet bij, dan weigert Firebase de terugkeerlink in het bericht.
-De shop stuurt het dan alsnog, maar zonder die link: je komt na het bevestigen
-op een pagina van Firebase in plaats van terug op je eigen site. Zet dit dus
-even goed.
-
-### 3. Kijk in je ongewenste post
-
-Het bericht vertrekt van `noreply@d-printing-shop-fbc7b.firebaseapp.com`. Dat
-adres kent je mailbox niet, dus het belandt makkelijk bij de spam. Markeer het
-één keer als *geen spam*, dan gaat het daarna vanzelf goed.
-
-### 4. Te vaak achter elkaar geprobeerd?
-
-Firebase houdt het na een stuk of vijf berichten naar hetzelfde adres even voor
-gezien. Wacht een kwartier en probeer opnieuw.
-
-### Het bericht mooier maken
-
-Firebase-console → **Authentication** → **Templates** → **Email address
-verification**. Daar pas je de afzendernaam, het onderwerp en de tekst aan.
-Handig: zet **From name** op `Extrudo`, anders staat er de naam van je project.
