@@ -970,7 +970,8 @@ function firestoreHint(err){
   if (/index/i.test(err?.message || ""))
     return "Deze zoekopdracht heeft een extra index nodig in Firestore. De foutmelding in de browserconsole bevat een link die de index in één klik aanmaakt.";
   if (/permission-denied/.test(code))
-    return "Firestore weigert toegang. Zet in de Firebase Console de regels op testmodus (Firestore Database → Rules), of controleer of ze niet verlopen zijn — testregels vervallen na 30 dagen.";
+    return "Firestore weigert dit. Meestal betekent dat dat de regels iets nog niet kennen: " +
+           "kopieer firestore.rules opnieuw naar Firebase Console → Firestore Database → Regels → Publiceren.";
   if (/unavailable|failed-precondition|not-found/.test(code))
     return "De database is nog niet aangemaakt. Ga in de Firebase Console naar Build → Firestore Database en klik op Create database.";
   if (/unauthenticated/.test(code))
@@ -2153,6 +2154,7 @@ async function wisVoorbeeld(productId){
 }
 /* Eén keer ophalen per product; daarna uit het geheugen. */
 const voorbeeldCache = new Map();
+let voorbeeldFout = null;
 async function haalVoorbeeld(productId){
   if (voorbeeldCache.has(productId)) return voorbeeldCache.get(productId);
   let uit = null;
@@ -2171,7 +2173,11 @@ async function haalVoorbeeld(productId){
         }),
       };
     }
-  }catch(e){ /* geen voorbeeld is geen probleem */ }
+  }catch(e){
+    // geen voorbeeld is op zich geen probleem, maar een geweigerde toegang wel:
+    // dan staat het model er wél en mag je niet denken dat het kwijt is
+    if (/permission-denied/.test(e?.code || "")) voorbeeldFout = e;
+  }
   voorbeeldCache.set(productId, uit);
   return uit;
 }
@@ -3411,10 +3417,16 @@ function viewProduct(){
       // zwart vlak; dan lijkt het alsof er iets stuk is.
       : `<div class="viewer-leeg">
            <p style="font-size:30px;margin:0 0 8px;">${ic("cube")}</p>
-           <p style="font-size:13px;margin:0;">Nog geen foto of 3D-model</p>
+           ${p.has3d && state.profile?.isAdmin ? `
+             <p style="font-size:13px;margin:0 0 4px;">Er hoort een 3D-model bij, maar het is er niet</p>
+             <p style="font-size:12px;opacity:.85;margin:0;max-width:34ch;line-height:1.5;">
+               Firestore laat de collectie <span class="font-mono">previews</span> nog niet toe.
+               Plak firestore.rules opnieuw in Firebase → Firestore Database → Regels.
+             </p>`
+           : `<p style="font-size:13px;margin:0;">Nog geen foto of 3D-model</p>`}
            ${state.profile?.isAdmin ? `
              <button class="btn btn-ghost btn-sm" style="margin-top:12px;"
-                     onclick="window.__editProduct('${p.id}')">Voeg er een toe</button>` : ``}
+                     onclick="window.__editProduct('${p.id}')">Naar het product</button>` : ``}
          </div>`;
   const strip = all.length > 1 ? `
     <div class="strip">
@@ -6656,9 +6668,25 @@ function attachAdminHandlers(){
       } else {
         id = await addProduct(data);
       }
-      if (model) await bewaarVoorbeeld(id, model);
-      else if (model === null) await wisVoorbeeld(id);
+      // Het 3D-voorbeeld staat in een eigen collectie. Weigert Firestore die —
+      // omdat de regels hem nog niet kennen — dan zou het product blijven
+      // beweren dat er een model bij zit terwijl dat er niet is. Daarom zetten
+      // we dat vlaggetje in dat geval meteen weer terug, en zeggen we wat er
+      // moet gebeuren in plaats van alleen "insufficient permissions".
       if (model !== undefined) voorbeeldCache.delete(id);
+      if (model || model === null){
+        try{
+          if (model) await bewaarVoorbeeld(id, model);
+          else await wisVoorbeeld(id);
+        }catch(err){
+          if (model) await updateProduct(id, { has3d: false }).catch(()=>{});
+          notify("Het product is bewaard, maar het 3D-model niet: " + firestoreHint(err));
+          state.__draftImages = []; state.__draftSlots = null;
+          state.__draftModel = undefined; state.__draftProduct = null;
+          render();
+          return;
+        }
+      }
       state.__draftImages = [];
       state.__draftSlots = null;
       state.__draftModel = undefined;
