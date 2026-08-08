@@ -564,8 +564,21 @@ function notify(msg){
 }
 
 /* --------------------------- state --------------------------- */
+/* Waar iemand was toen hij herlaadde. Inloggen en betalen slaan we over: daar
+   halverwege terugkomen helpt niemand. */
+const HERSTELBARE_VIEWS = ["shop","product","custom","quote","cart","account","admin"];
+function bewaardeView(){
+  try{
+    const v = JSON.parse(sessionStorage.getItem('lc_view') || "null");
+    if (v && HERSTELBARE_VIEWS.includes(v.view)) return v;
+  }catch(e){}
+  return null;
+}
+const __start = bewaardeView();
+
 let state = {
-  view: "shop",
+  view: __start?.view || "shop",
+  selectedProductId: __start?.productId || null,
   products: [],
   productsLoaded: false,
   productsError: null,
@@ -587,8 +600,19 @@ function cartCount(){ return state.cart.reduce((s,i)=>s+i.qty,0); }
 function go(view, extra){
   state.view = view;
   if (extra) Object.assign(state, extra);
+  bewaarView();
   render();
   window.scrollTo(0,0);
+}
+/* Onthoudt de huidige pagina, zodat een herlaadbeurt je niet terugzet op de
+   startpagina. Het gekozen product bewaren we op naam, niet als voorwerp. */
+function bewaarView(){
+  try{
+    sessionStorage.setItem('lc_view', JSON.stringify({
+      view: HERSTELBARE_VIEWS.includes(state.view) ? state.view : "shop",
+      productId: state.selectedProduct?.id || state.selectedProductId || null,
+    }));
+  }catch(e){}
 }
 window.go = go;
 
@@ -629,9 +653,17 @@ onAuthStateChanged(auth, async (u) => {
     stopJob();
     listenProducts();
   }
+  bewaakView();
   renderAuthNav();
   render();
 });
+
+/* Na een herlaadbeurt mag een teruggezette pagina niet meer tonen dan mag. */
+function bewaakView(){
+  if (state.view === "admin" && !state.profile?.isAdmin) state.view = "shop";
+  if ((state.view === "account" || state.view === "quote") && !state.user) state.view = "shop";
+  bewaarView();
+}
 
 /* Haalt het profiel op, maakt het aan als het ontbreekt, en zorgt dat de
    vaste beheerdersadressen hun rechten krijgen. */
@@ -703,6 +735,12 @@ function listenProducts(){
     state.productsLoaded = true;
     state.productsError = null;
     state.productsStalled = false;
+    // Na een herlaadbeurt op een productpagina: het product weer opzoeken.
+    if (!state.selectedProduct && state.selectedProductId){
+      const p = state.products.find(x => x.id === state.selectedProductId);
+      if (p) state.selectedProduct = p;
+      else if (state.view === "product") state.view = "shop";
+    }
     if (state.view === "shop" || state.view === "product" || state.view === "admin") render();
   }, (err) => {
     clearTimeout(state.__productsTimer);
@@ -1037,38 +1075,99 @@ function parseStl(buffer){
    geen bibliotheek nodig — alleen de indeling van het zipbestand. */
 async function unzip(buffer){
   const view = new DataView(buffer);
+  const eind = buffer.byteLength;
   const files = new Map();
+
+  // Elke leesbewerking eerst aftoetsen. Zonder deze controle geeft de browser
+  // enkel "Out of bounds access", waar niemand iets aan heeft.
+  const kan = (off, len) => off >= 0 && off + len <= eind;
+  const u16 = (off) => { if (!kan(off, 2)) throw new Error("het bestand is onvolledig of beschadigd"); return view.getUint16(off, true); };
+  const u32 = (off) => { if (!kan(off, 4)) throw new Error("het bestand is onvolledig of beschadigd"); return view.getUint32(off, true); };
+  const u64 = (off) => {
+    if (!kan(off, 8)) throw new Error("het bestand is onvolledig of beschadigd");
+    const n = view.getBigUint64(off, true);
+    if (n > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("het bestand is te groot om in de browser te openen");
+    return Number(n);
+  };
+
   // eind van de centrale map opzoeken, achteraan het bestand
   let eocd = -1;
-  for (let i = buffer.byteLength - 22; i >= Math.max(0, buffer.byteLength - 66000); i--){
-    if (view.getUint32(i, true) === 0x06054b50){ eocd = i; break; }
+  for (let i = eind - 22; i >= Math.max(0, eind - 66000); i--){
+    if (kan(i, 4) && view.getUint32(i, true) === 0x06054b50){ eocd = i; break; }
   }
-  if (eocd < 0) throw new Error("geen geldig zip-bestand");
-  const count = view.getUint16(eocd + 10, true);
-  let p = view.getUint32(eocd + 16, true);
+  if (eocd < 0) throw new Error("dit is geen geldig zip- of 3mf-bestand");
+
+  let count = u16(eocd + 10);
+  let p = u32(eocd + 16);
+
+  // Zip64: bij grote of door sommige slicers geschreven archieven staan de
+  // echte aantallen en posities niet in de gewone staart maar in een extra
+  // blok ervoor. Bambu Studio schrijft die vorm.
+  const loc = eocd - 20;
+  if (loc >= 0 && kan(loc, 4) && view.getUint32(loc, true) === 0x07064b50){
+    const z64 = u64(loc + 8);
+    if (kan(z64, 4) && view.getUint32(z64, true) === 0x06064b50){
+      count = u64(z64 + 32);
+      p = u64(z64 + 48);
+    }
+  }
 
   for (let i = 0; i < count; i++){
-    if (view.getUint32(p, true) !== 0x02014b50) break;
-    const method   = view.getUint16(p + 10, true);
-    const compSize = view.getUint32(p + 20, true);
-    const nameLen  = view.getUint16(p + 28, true);
-    const extraLen = view.getUint16(p + 30, true);
-    const cmtLen   = view.getUint16(p + 32, true);
-    const localOff = view.getUint32(p + 42, true);
+    if (!kan(p, 46) || view.getUint32(p, true) !== 0x02014b50) break;
+    const method   = u16(p + 10);
+    const flags    = u16(p + 8);
+    let   compSize = u32(p + 20);
+    let   uncSize  = u32(p + 24);
+    const nameLen  = u16(p + 28);
+    const extraLen = u16(p + 30);
+    const cmtLen   = u16(p + 32);
+    let   localOff = u32(p + 42);
+    if (!kan(p + 46, nameLen)) throw new Error("het bestand is onvolledig of beschadigd");
     const name = new TextDecoder().decode(new Uint8Array(buffer, p + 46, nameLen));
-    p += 46 + nameLen + extraLen + cmtLen;
+
+    // Zip64-veld in de extra gegevens: alles wat 0xFFFFFFFF is staat daar echt.
+    let e = p + 46 + nameLen;
+    const extraEind = e + extraLen;
+    while (e + 4 <= extraEind){
+      const id = u16(e), len = u16(e + 2);
+      if (id === 0x0001){
+        let q = e + 4;
+        if (uncSize  === 0xFFFFFFFF && q + 8 <= e + 4 + len){ uncSize  = u64(q); q += 8; }
+        if (compSize === 0xFFFFFFFF && q + 8 <= e + 4 + len){ compSize = u64(q); q += 8; }
+        if (localOff === 0xFFFFFFFF && q + 8 <= e + 4 + len){ localOff = u64(q); q += 8; }
+        break;
+      }
+      e += 4 + len;
+    }
+    p = extraEind + cmtLen;
 
     // de lokale kop herhaalt de lengtes; alleen daar staat de echte offset
-    const lNameLen  = view.getUint16(localOff + 26, true);
-    const lExtraLen = view.getUint16(localOff + 28, true);
+    if (!kan(localOff, 30) || view.getUint32(localOff, true) !== 0x04034b50){
+      throw new Error("het bestand is onvolledig of beschadigd");
+    }
+    const lNameLen  = u16(localOff + 26);
+    const lExtraLen = u16(localOff + 28);
     const dataOff = localOff + 30 + lNameLen + lExtraLen;
-    const raw = new Uint8Array(buffer, dataOff, compSize);
+
+    // Bij een gegevensbeschrijver achteraf staat de maat alleen in de centrale
+    // map; die gebruiken we hier al. Blijft ze nul, dan lezen we tot het einde.
+    let lengte = compSize;
+    if ((flags & 8) && !lengte) lengte = eind - dataOff;
+    if (!kan(dataOff, lengte)) throw new Error(`onderdeel "${name}" valt buiten het bestand`);
+    const raw = new Uint8Array(buffer, dataOff, lengte);
 
     if (method === 0){ files.set(name, raw); continue; }
     if (method !== 8) continue;                      // alleen deflate komt voor
-    const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-    files.set(name, new Uint8Array(await new Response(stream).arrayBuffer()));
+    try{
+      const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      files.set(name, new Uint8Array(await new Response(stream).arrayBuffer()));
+    }catch(err){
+      // Eén onleesbaar onderdeel mag het hele bestand niet onbruikbaar maken:
+      // vaak hebben we alleen 3D/3dmodel.model nodig.
+      if (/3dmodel\.model$/i.test(name)) throw new Error(`het model in dit bestand kon niet uitgepakt worden`);
+    }
   }
+  if (!files.size) throw new Error("dit 3mf-bestand bevat geen leesbare onderdelen");
   return files;
 }
 
@@ -2090,7 +2189,10 @@ function filamentPicker(p){
 
 function viewProduct(){
   const p = state.selectedProduct;
-  if (!p) return `<p class="muted">Product niet gevonden.</p>`;
+  if (!p) return state.productsLoaded
+    ? `<div style="padding:32px 0;"><p class="muted">Dit product bestaat niet meer.</p>
+       <button class="btn btn-accent" onclick="go('shop')">Naar de collectie</button></div>`
+    : `<div style="padding:32px 0;"><p class="muted"><i class="fa-solid fa-spinner" aria-hidden="true"></i> Even je product ophalen…</p></div>`;
   const imgs = productImages(p);
   const chosen = currentFilament(p);
   // index 0 is het kleurvoorbeeld, daarna komen de foto's van het product
@@ -2157,6 +2259,9 @@ function viewProduct(){
 function attachProductHandlers(){
   let qty = 1;
   const qv = document.getElementById('qVal');
+  // Vlak na een herlaadbeurt zijn de producten er nog niet en staat er alleen
+  // een melding; dan valt er ook niets aan te haken.
+  if (!qv) return;
   document.getElementById('qMinus').onclick = ()=>{ qty=Math.max(1,qty-1); qv.textContent=qty; };
   document.getElementById('qPlus').onclick = ()=>{ qty++; qv.textContent=qty; };
   document.querySelectorAll('[data-img]').forEach(btn=>{
@@ -2213,6 +2318,87 @@ function attachProductHandlers(){
    ===================================================================== */
 const UNITS = { mm: 1, cm: 10, inch: 25.4 };
 
+/* =====================================================================
+   Een halfafgewerkte opdracht bewaren
+   Wie per ongeluk herlaadt, moet zijn bestanden niet opnieuw hoeven kiezen.
+   De instellingen zijn klein en gaan naar sessionStorage; de bestanden zelf
+   zijn te groot daarvoor en gaan naar IndexedDB, één rij per onderdeel.
+   ===================================================================== */
+const PARTS_DB = "layercraft", PARTS_STORE = "bestanden";
+function partsDb(){
+  return new Promise((res, rej) => {
+    if (!self.indexedDB) return rej(new Error("geen opslag"));
+    const req = indexedDB.open(PARTS_DB, 1);
+    req.onupgradeneeded = () => {
+      const d = req.result;
+      if (!d.objectStoreNames.contains(PARTS_STORE)) d.createObjectStore(PARTS_STORE);
+    };
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error || new Error("opslag niet beschikbaar"));
+  });
+}
+function partsTx(mode, fn){
+  return partsDb().then(d => new Promise((res, rej) => {
+    const tx = d.transaction(PARTS_STORE, mode);
+    const req = fn(tx.objectStore(PARTS_STORE));
+    tx.oncomplete = () => res(req?.result);
+    tx.onerror = () => rej(tx.error);
+  }));
+}
+const bewaarBestand = (id, blob) => partsTx("readwrite", s => s.put(blob, id)).catch(()=>{});
+const leesBestand   = (id)       => partsTx("readonly",  s => s.get(id)).catch(()=>null);
+const wisBestand    = (id)       => partsTx("readwrite", s => s.delete(id)).catch(()=>{});
+const wisAlleBestanden = ()      => partsTx("readwrite", s => s.clear()).catch(()=>{});
+
+/* De instellingen van elk onderdeel; de zware gegevens blijven eruit. */
+function bewaarOpdracht(){
+  try{
+    const parts = (state.parts || []).map(p => ({
+      id: p.id, name: p.name, fileName: p.fileName, fileSize: p.fileSize,
+      unit: p.unit, scale: p.scale, infill: p.infill, layer: p.layer,
+      filamentId: p.filamentId, qty: p.qty, fromSplit: !!p.fromSplit,
+    }));
+    if (!parts.length){ sessionStorage.removeItem('lc_parts'); return; }
+    sessionStorage.setItem('lc_parts', JSON.stringify({
+      parts, assembled: !!state.assembled, notes: state.projectNotes || "", at: Date.now(),
+    }));
+  }catch(e){}
+}
+function vergeetOpdracht(){
+  sessionStorage.removeItem('lc_parts');
+  wisAlleBestanden();
+}
+
+/* Haalt een onderbroken opdracht terug en analyseert de bestanden opnieuw. */
+let opdrachtHersteld = false;
+async function herstelOpdracht(){
+  if (opdrachtHersteld) return;
+  opdrachtHersteld = true;
+  let bewaard;
+  try{ bewaard = JSON.parse(sessionStorage.getItem('lc_parts') || "null"); }catch(e){ return; }
+  if (!bewaard?.parts?.length) return;
+
+  const terug = [];
+  for (const b of bewaard.parts){
+    const blob = await leesBestand(b.id);
+    if (!blob) continue;                       // bestand weg: dit onderdeel overslaan
+    const file = new File([blob], b.fileName, { type: blob.type || "application/octet-stream" });
+    terug.push({ ...newPart(file), ...b, file, geo: null, error: null, busy: true });
+  }
+  if (!terug.length){ vergeetOpdracht(); return; }
+
+  for (const p of terug){
+    const n = parseInt(String(p.id).replace(/^p/, ""), 10);
+    if (isFinite(n) && n > __partSeq) __partSeq = n;
+  }
+  state.parts = terug;
+  state.assembled = !!bewaard.assembled;
+  state.projectNotes = bewaard.notes || "";
+  if (state.view === "custom") render();
+  await analyseerWachtende();
+  notify(`Je opdracht is teruggezet — ${terug.length} ${terug.length > 1 ? "onderdelen" : "onderdeel"}`);
+}
+
 function newPart(file){
   return {
     id: "p" + (++__partSeq),
@@ -2250,10 +2436,13 @@ window.__splitPart = (id) => {
     np.infill = part.infill; np.layer = part.layer;
     np.filamentId = part.filamentId;
     np.fromSplit = true;
+    bewaarBestand(np.id, part.file);
     return np;
   });
   const at = parts.indexOf(part);
   state.parts.splice(at, 1, ...made);
+  wisBestand(part.id);
+  bewaarOpdracht();
   notify(`Gesplitst in ${made.length} onderdelen`);
   render();
 };
@@ -2828,8 +3017,52 @@ async function probeStorage(){
   }
 }
 
+/* Leest elk onderdeel dat nog op analyse wacht. Dezelfde weg voor een vers
+   gekozen bestand als voor een teruggezette opdracht na een herlaadbeurt. */
+async function analyseerWachtende(){
+  for (const part of (state.parts || []).filter(p => p.busy)){
+    try{
+      if (/\.obj$/i.test(part.fileName)){
+        part.error = "Van .obj lezen we de maten niet automatisch — we sturen je een prijs na controle.";
+        part.busy = false; render(); continue;
+      }
+      const geos = await analyzeFile(part.file);
+      part.geo = geos[0];
+      applyGeoColor(part, geos[0]);
+      // een 3mf met meerdere objecten of platen valt meteen uiteen
+      if (geos.length > 1){
+        const extra = geos.slice(1).map((g, i) => {
+          const np = newPart(part.file);
+          np.busy = false;
+          np.geo = g;
+          np.name = g.label || `${part.name} ${i + 2}`;
+          np.fromSplit = true;
+          applyGeoColor(np, g);
+          bewaarBestand(np.id, part.file);
+          return np;
+        });
+        part.name = geos[0].label || part.name + " 1";
+        part.fromSplit = true;
+        const at = state.parts.indexOf(part);
+        state.parts.splice(at + 1, 0, ...extra);
+        notify(`${geos.length} onderdelen gevonden in ${part.fileName}`);
+      } else {
+        // één object, maar misschien meerdere losse stukken erin
+        part.splittable = splitGeo(geos[0]);
+      }
+    }catch(err){
+      part.error = "Kon dit bestand niet uitlezen: " + (err.message || err);
+    }finally{
+      part.busy = false;
+      bewaarOpdracht();
+      render();
+    }
+  }
+}
+
 function attachCustomHandlers(){
   listenBridge();          // weten of de werkplaats meedraait, vóór er iemand wacht
+  herstelOpdracht();       // stond er nog een halfafgewerkte opdracht klaar?
   attachMeshViewers();
   probeStorage();
   const input = document.getElementById('fileInput');
@@ -2848,43 +3081,10 @@ function attachCustomHandlers(){
     }
     render();
 
-    // analyseren gebeurt daarna, zodat de kaarten meteen zichtbaar zijn
-    for (const part of state.parts.filter(p => p.busy)){
-      try{
-        if (/\.obj$/i.test(part.fileName)){
-          part.error = "Van .obj lezen we de maten niet automatisch — we sturen je een prijs na controle.";
-          part.busy = false; render(); continue;
-        }
-        const geos = await analyzeFile(part.file);
-        part.geo = geos[0];
-        applyGeoColor(part, geos[0]);
-        // een 3mf met meerdere objecten of platen valt meteen uiteen
-        if (geos.length > 1){
-          const extra = geos.slice(1).map((g, i) => {
-            const np = newPart(part.file);
-            np.busy = false;
-            np.geo = g;
-            np.name = g.label || `${part.name} ${i + 2}`;
-            np.fromSplit = true;
-            applyGeoColor(np, g);
-            return np;
-          });
-          part.name = geos[0].label || part.name + " 1";
-          part.fromSplit = true;
-          const at = state.parts.indexOf(part);
-          state.parts.splice(at + 1, 0, ...extra);
-          notify(`${geos.length} onderdelen gevonden in ${part.fileName}`);
-        } else {
-          // één object, maar misschien meerdere losse stukken erin
-          part.splittable = splitGeo(geos[0]);
-        }
-      }catch(err){
-        part.error = "Kon dit bestand niet uitlezen: " + (err.message || err);
-      }finally{
-        part.busy = false;
-        render();
-      }
-    }
+    for (const p of state.parts) if (p.file) bewaarBestand(p.id, p.file);
+    bewaarOpdracht();
+    render();
+    await analyseerWachtende();
   };
 
   document.querySelectorAll('[data-split]').forEach(btn=>{
@@ -2894,6 +3094,8 @@ function attachCustomHandlers(){
   document.querySelectorAll('[data-remove]').forEach(btn=>{
     btn.onclick = () => {
       state.parts = (state.parts || []).filter(p => p.id !== btn.dataset.remove);
+      wisBestand(btn.dataset.remove);
+      bewaarOpdracht();
       render();
     };
   });
@@ -2904,7 +3106,7 @@ function attachCustomHandlers(){
     card.querySelectorAll('[data-field]').forEach(el=>{
       const apply = () => {
         const f = el.dataset.field;
-        if (f === 'name') { part.name = el.value; return; }        // geen render: cursor blijft staan
+        if (f === 'name') { part.name = el.value; bewaarOpdracht(); return; }  // geen render: cursor blijft staan
         if (f === 'qty') part.qty = Math.min(999, Math.max(1, parseInt(el.value,10) || 1));
         else if (f === 'scale') part.scale = parseInt(el.value,10) || 100;
         else if (f === 'infill') part.infill = parseInt(el.value,10);
@@ -2915,6 +3117,7 @@ function attachCustomHandlers(){
           const first = availableFilaments(null).find(x => x.type === el.value);
           part.filamentId = first ? first.id : null;
         }
+        bewaarOpdracht();
         render();
       };
       if (el.dataset.field === 'name') el.oninput = apply;
@@ -2924,10 +3127,10 @@ function attachCustomHandlers(){
   });
 
   const box = document.getElementById('assembleBox');
-  if (box) box.onchange = () => { state.assembled = box.checked; render(); };
+  if (box) box.onchange = () => { state.assembled = box.checked; bewaarOpdracht(); render(); };
 
   const notes = document.getElementById('projectNotes');
-  if (notes) notes.oninput = () => { state.projectNotes = notes.value; };
+  if (notes) notes.oninput = () => { state.projectNotes = notes.value; bewaarOpdracht(); };
 
   const add = document.getElementById('addJobBtn');
   if (add) add.onclick = () => addJobToCart(add);
@@ -3047,6 +3250,7 @@ async function addJobToCart(btn){
       createdAt: Date.now(),
     });
 
+    vergeetOpdracht();
     if (wantSlice){
       // Niet meteen in de winkelwagen: eerst moet Bambu Studio zeggen wat het
       // echt kost. De offertepagina luistert mee tot dat antwoord binnen is.
