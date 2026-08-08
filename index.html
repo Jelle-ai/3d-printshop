@@ -247,6 +247,12 @@
     position:absolute;right:8px;bottom:8px;color:var(--paper);opacity:.55;
     font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
   }
+  .viewer-toggle{
+    position:absolute;right:8px;top:8px;padding:5px 10px;font-size:11px;
+    background:rgba(20,20,20,.72);color:var(--paper);border-color:rgba(255,255,255,.22);
+    backdrop-filter:blur(3px);
+  }
+  .viewer-toggle:hover{background:rgba(20,20,20,.9);border-color:rgba(255,255,255,.4);}
   .strip{display:flex;gap:8px;margin-top:8px;}
   .strip button{
     width:60px;height:60px;overflow:hidden;border:none;border-radius:9px;background:var(--plate);padding:0;flex-shrink:0;
@@ -566,7 +572,7 @@ function notify(msg){
 /* --------------------------- state --------------------------- */
 /* Waar iemand was toen hij herlaadde. Inloggen en betalen slaan we over: daar
    halverwege terugkomen helpt niemand. */
-const HERSTELBARE_VIEWS = ["shop","product","custom","quote","cart","account","admin"];
+const HERSTELBARE_VIEWS = ["shop","product","custom","cart","account","admin"];
 function bewaardeView(){
   try{
     const v = JSON.parse(sessionStorage.getItem('lc_view') || "null");
@@ -645,12 +651,10 @@ onAuthStateChanged(auth, async (u) => {
     }
     listenOrders();
     listenProducts(); // opnieuw luisteren (beheerder ziet alles)
-    resumeJob();      // stond er nog een offerte te wachten op de slicer?
   } else {
     state.profile = null;
     state.profileError = null;
     state.orders = [];
-    stopJob();
     listenProducts();
   }
   bewaakView();
@@ -661,7 +665,7 @@ onAuthStateChanged(auth, async (u) => {
 /* Na een herlaadbeurt mag een teruggezette pagina niet meer tonen dan mag. */
 function bewaakView(){
   if (state.view === "admin" && !state.profile?.isAdmin) state.view = "shop";
-  if ((state.view === "account" || state.view === "quote") && !state.user) state.view = "shop";
+  if (state.view === "account" && !state.user) state.view = "shop";
   bewaarView();
 }
 
@@ -895,14 +899,207 @@ const DEFAULT_PRICING = {
   assemblyBase: 4.00,       // eerste onderdeel in elkaar zetten
   assemblyPerPart: 1.50,    // elk volgend onderdeel
   discountTiers: [{ from: 3, pct: 5 }, { from: 6, pct: 10 }, { from: 12, pct: 15 }],
-  // De slice-brug op de werkplaats-PC laat Bambu Studio het model echt slicen en
-  // stuurt de werkelijke printtijd en het werkelijke gewicht terug. Staat dit aan,
-  // dan wacht de klant daarop in plaats van op onze eigen berekening af te gaan.
-  sliceRequired: true,
-  sliceTimeoutMin: 15,      // duurt het langer, dan rekenen we toch met de schatting
 };
+
+/* De instellingen waarmee we snijden. Ze horen bij de X1C met een 0.4-nozzle;
+   staan jouw echte printtijden er structureel naast, dan stel je ze hier bij
+   (Beheer → Prijzen → Slicer). */
+/* De waarden komen uit de openbare profielen van de X1 Carbon met een
+   0.4-nozzle: "0.20mm Standard @BBL X1C" voor de snelheden en versnellingen,
+   en het filamentprofiel voor de doorvoer. */
+const DEFAULT_SLICER = {
+  lineWidth: 0.42,          // extrusiebreedte bij een 0.4-nozzle
+  walls: 2,                 // aantal wanden
+  topShells: 4,             // massieve lagen aan de bovenkant
+  bottomShells: 3,          // massieve lagen aan de onderkant
+  maxFlow: 21,              // mm³/s, wat de hotend aankan
+  speedOuter: 200,          // mm/s buitenwand
+  speedInner: 300,          // mm/s binnenwanden
+  speedSolid: 250,          // mm/s massieve vlakken
+  speedSparse: 270,         // mm/s vulling
+  accelOuter: 5000,         // mm/s² buitenwand: rustiger voor de afwerking
+  accelPrint: 10000,        // mm/s² de rest van het printwerk
+  travelFactor: 1.08,       // toeslag voor verplaatsen zonder te printen
+  layerSec: 1.2,            // vaste tijd per laag
+};
+function slicerSettings(){ return { ...DEFAULT_SLICER, ...(pricing().slicer || {}) }; }
 const MAX_PARTS = 12;       // zoals bij PCBWay: twaalf onderdelen per opdracht
 function pricing(){ return { ...DEFAULT_PRICING, ...(state.pricing || {}) }; }
+
+/* =====================================================================
+   Slicen in de browser
+   Een echte slicer snijdt het model in lagen en legt per laag banen. Dat doen
+   we hier ook, alleen tekenen we de banen niet uit — we hebben alleen de
+   lengte en het volume nodig.
+
+   Per laag snijden we elke driehoek met het vlak op die hoogte. Dat geeft
+   losse lijnstukjes. Als je die stukjes de goede kant op zet — met het
+   materiaal links — dan geeft de landmeterformule meteen de doorsnede, en de
+   som van hun lengtes de omtrek. Zo hebben we geen ingewikkeld aaneenrijgen
+   van contouren nodig en werkt het ook op een model dat niet helemaal dicht is.
+
+   Uit doorsnede en omtrek volgt de rest: de wanden liggen langs de omtrek, de
+   boven- en onderkant zijn de vlakken waar het model begint of ophoudt, en wat
+   overblijft krijgt het vulpercentage van de klant.
+   ===================================================================== */
+function sliceMesh(mesh, { layerHeight, infill, scale = 1 }){
+  const s = slicerSettings();
+  const h = Math.max(0.04, layerHeight || 0.2);
+  const w = Math.max(0.1, s.lineWidth);
+  const nTri = mesh.length / 9;
+  if (!nTri) return null;
+
+  // hoogtebereik en per driehoek de onder- en bovengrens
+  const zLo = new Float32Array(nTri), zHi = new Float32Array(nTri);
+  let minZ = Infinity, maxZ = -Infinity;
+  for (let t = 0; t < nTri; t++){
+    const o = t * 9;
+    const a = mesh[o+2] * scale, b = mesh[o+5] * scale, c = mesh[o+8] * scale;
+    const lo = Math.min(a,b,c), hi = Math.max(a,b,c);
+    zLo[t] = lo; zHi[t] = hi;
+    if (lo < minZ) minZ = lo;
+    if (hi > maxZ) maxZ = hi;
+  }
+  const hoogte = maxZ - minZ;
+  if (!(hoogte > 0)) return null;
+  const lagen = Math.max(1, Math.round(hoogte / h));
+  if (lagen > 20000) return null;                 // onwerkbaar hoog: liever niets beweren
+
+  // driehoeken op ondergrens sorteren, zodat we ze in één veeg kunnen oppikken
+  const sorted = new Uint32Array(nTri);
+  for (let i = 0; i < nTri; i++) sorted[i] = i;
+  sorted.sort((a, b) => zLo[a] - zLo[b]);
+
+  const areas = new Float64Array(lagen), peris = new Float64Array(lagen);
+  let actief = [], volgende = 0;
+
+  // Een deel van de lagen houden we bij om te kunnen tonen. Niet alle: bij
+  // duizend lagen is dat onnodig zwaar en zie je het verschil toch niet.
+  const toonStap = Math.max(1, Math.ceil(lagen / 70));
+  const toon = [];
+  const TOON_MAX = 24000;
+
+  for (let L = 0; L < lagen; L++){
+    const z = minZ + (L + 0.5) * (hoogte / lagen);   // midden van de laag
+    while (volgende < nTri && zLo[sorted[volgende]] <= z) actief.push(sorted[volgende++]);
+
+    let opp2 = 0, omtrek = 0;
+    // Driehoeken die onder ons zijn gebleven vallen meteen uit de lijst: die
+    // komen bij een hogere laag toch niet meer terug.
+    for (let i = 0; i < actief.length; ){
+      const t = actief[i];
+      if (zHi[t] < z){ actief[i] = actief[actief.length - 1]; actief.pop(); continue; }
+      i++;
+      const o = t * 9;
+      const ax = mesh[o]*scale,   ay = mesh[o+1]*scale, az = mesh[o+2]*scale;
+      const bx = mesh[o+3]*scale, by = mesh[o+4]*scale, bz = mesh[o+5]*scale;
+      const cx = mesh[o+6]*scale, cy = mesh[o+7]*scale, cz = mesh[o+8]*scale;
+
+      // De twee snijpunten met het vlak. Uitgeschreven per zijde in plaats van
+      // via een hulpfunctie: deze lus draait miljoenen keren.
+      let px = 0, py = 0, qx = 0, qy = 0, n = 0, f = 0;
+      if ((az <= z) !== (bz <= z) && az !== bz){
+        f = (z - az) / (bz - az);
+        px = ax + (bx-ax)*f; py = ay + (by-ay)*f; n = 1;
+      }
+      if ((bz <= z) !== (cz <= z) && bz !== cz){
+        f = (z - bz) / (cz - bz);
+        const x = bx + (cx-bx)*f, y = by + (cy-by)*f;
+        if (n === 0){ px = x; py = y; n = 1; } else { qx = x; qy = y; n = 2; }
+      }
+      if (n < 2 && (cz <= z) !== (az <= z) && cz !== az){
+        f = (z - cz) / (az - cz);
+        const x = cx + (ax-cx)*f, y = cy + (ay-cy)*f;
+        if (n === 0){ px = x; py = y; n = 1; } else { qx = x; qy = y; n = 2; }
+      }
+      if (n !== 2) continue;
+
+      let dx = qx - px, dy = qy - py;
+      const len = Math.hypot(dx, dy);
+      if (!(len > 1e-9)) continue;
+
+      // de normaal van de driehoek zegt welke kant het materiaal ligt
+      const nx = (by-ay)*(cz-az) - (bz-az)*(cy-ay);
+      const ny = (bz-az)*(cx-ax) - (bx-ax)*(cz-az);
+      if (dy*nx - dx*ny < 0){                      // omdraaien: materiaal links
+        const tx = px, ty = py; px = qx; py = qy; qx = tx; qy = ty;
+        dx = -dx; dy = -dy;
+      }
+      opp2 += px*qy - qx*py;
+      omtrek += len;
+      if (L % toonStap === 0 && toon.length < TOON_MAX * 5) toon.push(px, py, qx, qy, z);
+    }
+    areas[L] = Math.abs(opp2) / 2;
+    peris[L] = omtrek;
+  }
+
+  // Van doorsnede en omtrek naar materiaal en tijd.
+  const dichtheid = Math.min(100, Math.max(0, infill)) / 100;
+  let wandVol = 0, lenBuiten = 0, lenBinnen = 0, binnenOpp = 0, massiefOpp = 0;
+  for (let L = 0; L < lagen; L++){
+    const A = areas[L], P = peris[L];
+    if (!(A > 0)) continue;
+    let wOpp = 0, wLenBuiten = 0, wLenBinnen = 0;
+    for (let k = 0; k < s.walls; k++){
+      // elke wand naar binnen is een stukje korter
+      const Pk = Math.max(0, P - 2 * Math.PI * (k + 0.5) * w);
+      wOpp += Pk * w;
+      if (k === 0) wLenBuiten += Pk; else wLenBinnen += Pk;
+    }
+    if (wOpp > A){ const f = A / wOpp; wOpp = A; wLenBuiten *= f; wLenBinnen *= f; }
+    wandVol += wOpp * h;
+    lenBuiten += wLenBuiten;
+    lenBinnen += wLenBinnen;
+
+    const binnen = Math.max(0, A - wOpp);
+    binnenOpp += binnen;
+    // waar het model begint of ophoudt komt een massief vlak
+    const boven = Math.max(0, A - (L + 1 < lagen ? areas[L+1] : 0));
+    const onder = Math.max(0, A - (L > 0 ? areas[L-1] : 0));
+    massiefOpp += boven * s.topShells + onder * s.bottomShells;
+  }
+  massiefOpp = Math.min(massiefOpp, binnenOpp);
+  const vulOpp = Math.max(0, binnenOpp - massiefOpp) * dichtheid;
+  const volume = wandVol + (massiefOpp + vulOpp) * h;
+
+  // Tijd zoals de open-source slicers hem schatten: per beweging optrekken,
+  // eventueel even doorrijden, en weer afremmen. Een korte baan haalt zijn
+  // topsnelheid nooit — daarom kost een klein model verhoudingsgewijs meer
+  // tijd dan een groot.
+  const doorstroom = s.maxFlow / (w * h);       // wat er door de nozzle past
+  function baanTijd(lengte, doel, accel){
+    if (!(lengte > 0)) return 0;
+    const v = Math.max(5, Math.min(doel, doorstroom));
+    const opgang = (v * v) / (2 * accel);        // afstand om op snelheid te komen
+    if (2 * opgang <= lengte) return 2 * (v / accel) + (lengte - 2 * opgang) / v;
+    return 2 * Math.sqrt(lengte / accel);        // te kort: alleen op- en afgaan
+  }
+  /* Totale tijd voor een hoeveelheid baanlengte die in stukken van `stuk`
+     gereden wordt. */
+  function tijdVoor(totaal, stuk, doel, accel){
+    if (!(totaal > 0) || !(stuk > 0)) return 0;
+    return (totaal / stuk) * baanTijd(stuk, doel, accel);
+  }
+
+  // Hoe lang is één ononderbroken baan? Vulling loopt in rechte lijnen door het
+  // vlak, dus ongeveer de wortel van de oppervlakte. Een wand loopt rond de
+  // contour; die nemen we in vier stukken, voor de hoeken onderweg.
+  const gemOpp = binnenOpp / lagen, gemOmtrek = (lenBuiten / Math.max(1, lagen));
+  const stukVul = Math.max(1, Math.sqrt(Math.max(1, gemOpp)));
+  const stukWand = Math.max(1, gemOmtrek / 4);
+
+  const seconden = (
+    tijdVoor(lenBuiten, stukWand, s.speedOuter, s.accelOuter) +
+    tijdVoor(lenBinnen, stukWand, s.speedInner, s.accelPrint) +
+    tijdVoor(massiefOpp / w, stukVul, s.speedSolid, s.accelPrint) +
+    tijdVoor(vulOpp / w, stukVul, s.speedSparse, s.accelPrint)
+  ) * s.travelFactor + lagen * s.layerSec;
+
+  return {
+    volume, seconds: seconden, layers: lagen, height: hoogte,
+    lines: new Float32Array(toon), shownLayers: Math.ceil(lagen / toonStap),
+  };
+}
 
 /* Materiaalvolume: de wand plus het ingevulde binnenwerk. */
 function printedVolumeMm3({ solidVolume, surfaceArea, infill, wallThickness }){
@@ -916,8 +1113,8 @@ function printSeconds(volumeMm3, heightMm, layerHeightMm, p){
   return volumeMm3 / p.flowRate + layers * p.layerOverheadSec;
 }
 /* Van tijd en gewicht naar een bedrag. Dit is het enige stuk dat de prijs
-   bepaalt, of die tijd en dat gewicht nu uit onze eigen berekening komen of
-   uit Bambu Studio zelf. Zo kost hetzelfde model altijd hetzelfde. */
+   bepaalt, of die tijd en dat gewicht nu uit de slicer komen of uit de
+   afmetingen die de klant opgaf. Zo kost hetzelfde model altijd hetzelfde. */
 function priceFrom({ seconds, grams, filamentType, pricePerKg, quantity = 1 }){
   const p = pricing();
   // duurder plastic slaat door in de prijs
@@ -1021,6 +1218,9 @@ function geoFromMesh(mesh, opts){
     minZ: min[2],
     mesh: sampleMesh(mesh),
     full: mesh.length / 9 <= FULL_MESH_LIMIT ? mesh : null,
+    // Van een te zwaar bestand houden we maar een deel van de driehoeken over.
+    // Daar kun je wel een vorm van tonen, maar niet betrouwbaar op snijden.
+    decimated: ((opts?.triangles) ?? mesh.length / 9) > mesh.length / 9,
     colorHex: opts?.colorHex || null,
     label: opts?.label || null,
   };
@@ -1472,38 +1672,36 @@ async function analyzeFile(file){
    3D-weergave — eigen renderer op een canvas, zonder externe bibliotheek.
    Driehoeken worden geprojecteerd, van achter naar voor getekend en vlak
    belicht. Dat is licht genoeg voor een telefoon en toont het model in het
-   gekozen filament.
+   gekozen filament. Daarnaast tonen we op verzoek de lagen zoals de slicer
+   ze gesneden heeft.
    ===================================================================== */
-function drawMesh(canvas, geo, opts){
-  const { hex = "#B8BCC2", finish = "basic", yaw = 0.6, pitch = 0.5, plate = true } = opts || {};
+/* Zet het canvas klaar en levert de projectie: één plek waar de hoek, de
+   schaal en het plaatraster geregeld worden, voor beide weergaven. */
+function meshCanvas(canvas, geo, opts){
+  const { yaw = 0.6, pitch = 0.5, plate = true, scale = 1 } = opts || {};
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const w = canvas.clientWidth || 320, h = canvas.clientHeight || 320;
   canvas.width = Math.round(w * dpr);
   canvas.height = Math.round(h * dpr);
   const g = canvas.getContext('2d');
-  if (!g) return;
+  if (!g) return null;
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, w, h);
 
-  const m = geo.mesh;
-  if (!m || !m.length) return;
-
   const cy = Math.cos(yaw), sy = Math.sin(yaw);
   const cp = Math.cos(pitch), sp = Math.sin(pitch);
-  const [cx, cyy] = geo.center;
-  const span = Math.max(geo.size[0], geo.size[1], geo.size[2]) || 1;
+  const cx = geo.center[0] * scale, cyy = geo.center[1] * scale;
+  const minZ = geo.minZ * scale;
+  const span = Math.max(geo.size[0], geo.size[1], geo.size[2]) * scale || 1;
   const zoom = Math.min(w, h) * 0.36 / span;
   const ox = w / 2, oy = h / 2 + Math.min(w, h) * 0.10;
 
   // z omhoog, y naar achter — zoals een print op een plaat staat
   function project(x, y, z){
-    const dx = x - cx, dy = y - cyy, dz = z - geo.minZ;
+    const dx = x - cx, dy = y - cyy, dz = z - minZ;
     const rx = dx * cy - dy * sy;
     const ry = dx * sy + dy * cy;
-    const sx = ox + rx * zoom;
-    const sy2 = oy - (dz * cp - ry * sp) * zoom;
-    const depth = ry * cp + dz * sp;
-    return [sx, sy2, depth];
+    return [ox + rx * zoom, oy - (dz * cp - ry * sp) * zoom, ry * cp + dz * sp];
   }
 
   if (plate){
@@ -1511,13 +1709,49 @@ function drawMesh(canvas, geo, opts){
     const half = PLATE.x / 2;
     g.lineWidth = 1;
     for (let v = -half; v <= half; v += 50){
-      const a = project(cx + v, cyy - half, geo.minZ), b = project(cx + v, cyy + half, geo.minZ);
-      const c = project(cx - half, cyy + v, geo.minZ), d = project(cx + half, cyy + v, geo.minZ);
+      const a = project(cx + v, cyy - half, minZ), b = project(cx + v, cyy + half, minZ);
+      const c = project(cx - half, cyy + v, minZ), d = project(cx + half, cyy + v, minZ);
       g.strokeStyle = (v === -half || v === half) ? "rgba(255,255,255,.22)" : "rgba(255,255,255,.08)";
       g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
       g.beginPath(); g.moveTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.stroke();
     }
   }
+  return { g, w, h, project, cy, sy };
+}
+
+/* Tekent de lagen zoals de slicer ze gesneden heeft: van onder naar boven,
+   zodat je ziet hoe het model werkelijk opgebouwd wordt. */
+function drawSlices(canvas, geo, slice, opts){
+  const { hex = "#B8BCC2" } = opts || {};
+  const c = meshCanvas(canvas, geo, opts);
+  if (!c || !slice?.lines?.length) return;
+  const { g, project } = c;
+  const L = slice.lines;
+  const { r, g: gg, b } = hexToRgb(hex);
+  const hoogte = slice.height || 1;
+  const z0 = L[4];
+
+  g.lineCap = "round";
+  g.lineWidth = 1.2;
+  // van onder naar boven: hogere lagen komen over de lagere te liggen
+  for (let i = 0; i < L.length; i += 5){
+    const z = L[i+4];
+    const f = 0.45 + 0.55 * Math.min(1, Math.max(0, (z - z0) / hoogte));
+    const a = project(L[i], L[i+1], z);
+    const bb = project(L[i+2], L[i+3], z);
+    g.strokeStyle = `rgba(${Math.round(r*f)},${Math.round(gg*f)},${Math.round(b*f)},.95)`;
+    g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(bb[0], bb[1]); g.stroke();
+  }
+}
+
+function drawMesh(canvas, geo, opts){
+  const { hex = "#B8BCC2", finish = "basic" } = opts || {};
+  const c = meshCanvas(canvas, geo, opts);
+  if (!c) return;
+  const { g, project, cy, sy } = c;
+
+  const m = geo.mesh;
+  if (!m || !m.length) return;
 
   const n = m.length / 9;
   const order = new Array(n);
@@ -1923,7 +2157,6 @@ function render(){
     case "shop": app.innerHTML = viewShop(); break;
     case "product": app.innerHTML = viewProduct(); attachProductHandlers(); return;
     case "custom": app.innerHTML = viewCustom(); attachCustomHandlers(); return;
-    case "quote": app.innerHTML = viewQuote(); attachQuoteHandlers(); return;
     case "cart": app.innerHTML = viewCart(); break;
     case "checkout": app.innerHTML = viewCheckout(); attachCheckoutHandlers(); return;
     case "payment": app.innerHTML = viewPayment(); attachPaymentHandlers(); return;
@@ -2454,17 +2687,40 @@ function partFilament(p){
   const list = availableFilaments(null);
   return list.find(f => f.id === p.filamentId) || list[0] || null;
 }
+/* Snijdt het onderdeel echt door en onthoudt de uitkomst, want dat werk hoeft
+   maar één keer per combinatie van instellingen. */
+function partSlice(p){
+  const mesh = p.geo?.full;
+  if (!mesh || p.geo.decimated) return null;
+  const k = partFactor(p);
+  const sleutel = `${k}|${p.layer}|${p.infill}|${JSON.stringify(pricing().slicer || {})}`;
+  if (p.__sliceKey === sleutel) return p.__slice;
+  p.__slice = sliceMesh(mesh, { layerHeight: parseFloat(p.layer), infill: p.infill, scale: k });
+  p.__sliceKey = sleutel;
+  return p.__slice;
+}
+
 function partEstimate(p){
   if (!p.geo) return null;
   const k = partFactor(p);
   const f = partFilament(p);
+  const type = f ? f.type : "PLA Basic";
+  const sl = partSlice(p);
+  if (sl){
+    const grams = (sl.volume / 1000) * (FILAMENT_DENSITY[type] || 1.24);
+    return {
+      volume: sl.volume, sliced: true, layers: sl.layers,
+      ...priceFrom({ seconds: sl.seconds, grams, filamentType: type, pricePerKg: f ? f.pricePerKg : undefined }),
+    };
+  }
+  // Terugval voor bestanden die te zwaar waren om helemaal te bewaren.
   return estimate({
     solidVolume: p.geo.volume * Math.pow(k, 3),
     surfaceArea: p.geo.surface * Math.pow(k, 2),
     heightMm: p.geo.size[2] * k,
     infill: p.infill,
     layerHeight: parseFloat(p.layer),
-    filamentType: f ? f.type : "PLA Basic",
+    filamentType: type,
     pricePerKg: f ? f.pricePerKg : undefined,
   });
 }
@@ -2496,246 +2752,8 @@ function projectTotals(){
     total: Math.max(0, subtotal - discount) + assembly,
     pending: parts.filter(p => p.busy).length,
     failed: parts.filter(p => p.error).length,
-  };
-}
-
-/* =====================================================================
-   De offerte: wachten tot Bambu Studio het model echt geslicet heeft
-   De brug op de werkplaats-PC pikt de opdracht op, laat Bambu Studio het
-   werk doen en schrijft de werkelijke printtijd en het werkelijke gewicht
-   terug in hetzelfde document. Wij luisteren daarop mee.
-   ===================================================================== */
-const SLICE_LABEL = {
-  wachten: "in de wachtrij",
-  bezig: "wordt geslicet",
-  klaar: "geslicet",
-  mislukt: "niet gelukt",
-};
-
-/* De prijs van één onderdeel uit een verstuurde opdracht. Zijn de echte
-   cijfers binnen, dan tellen die; anders vallen we terug op onze eigen
-   berekening zodat er nooit een leeg bedrag op het scherm staat. */
-function jobPartPrice(u){
-  const s = u.slice || null;
-  const sliced = !!(s && s.status === "klaar" && s.seconds > 0 && s.grams > 0);
-  const fil = u.filament ? findFilament(u.filament.id) : null;
-  return {
-    sliced,
-    ...priceFrom({
-      seconds: sliced ? s.seconds : (u.seconds || 0),
-      grams:   sliced ? s.grams   : (u.grams || 0),
-      filamentType: u.filament?.type,
-      pricePerKg: fil ? fil.pricePerKg : undefined,
-    }),
-  };
-}
-
-function jobTotals(job){
-  const parts = job?.parts || [];
-  const qty = parts.reduce((s,u) => s + (u.qty || 1), 0);
-  const rows = parts.map(u => ({ part: u, price: jobPartPrice(u) }));
-  const subtotal = rows.reduce((s,r) => s + r.price.unit * (r.part.qty || 1), 0);
-  const pct = volumeDiscount(qty);
-  const discount = subtotal * pct / 100;
-  const p = pricing();
-  const assembly = (job?.assembled && parts.length > 1)
-    ? p.assemblyBase + p.assemblyPerPart * (parts.length - 1)
-    : 0;
-  return {
-    rows, parts: parts.length, qty, subtotal, pct, discount, assembly,
-    grams: rows.reduce((s,r) => s + r.price.grams * (r.part.qty || 1), 0),
-    seconds: rows.reduce((s,r) => s + r.price.seconds * (r.part.qty || 1), 0),
-    total: Math.max(0, subtotal - discount) + assembly,
-    sliced: rows.length > 0 && rows.every(r => r.price.sliced),
-  };
-}
-
-/* Hoever staat het met het slicen van de hele opdracht? */
-function jobSliceState(job){
-  const parts = job?.parts || [];
-  if (!parts.length) return "wachten";
-  if (parts.some(u => u.slice?.status === "mislukt")) return "mislukt";
-  if (parts.every(u => u.slice?.status === "klaar")) return "klaar";
-  if (parts.some(u => u.slice?.status === "bezig")) return "bezig";
-  return "wachten";
-}
-
-let jobUnsub = null, jobTick = null;
-function stopJob(){
-  if (jobUnsub){ jobUnsub(); jobUnsub = null; }
-  if (jobTick){ clearInterval(jobTick); jobTick = null; }
-  state.job = null;
-  sessionStorage.removeItem('lc_job');
-}
-function listenJob(id){
-  if (jobUnsub) jobUnsub();
-  sessionStorage.setItem('lc_job', id);
-  jobUnsub = onSnapshot(doc(db, "uploads", id), snap => {
-    if (!snap.exists()) return;
-    state.job = { id, ...snap.data() };
-    state.jobError = null;
-    if (state.view === "quote") render();
-  }, err => {
-    state.jobError = err;
-    if (state.view === "quote") render();
-  });
-  // Terwijl we wachten loopt de klok door; zo blijft de wachttijd kloppen en
-  // valt de terugvalknop op tijd binnen.
-  if (jobTick) clearInterval(jobTick);
-  jobTick = setInterval(() => { if (state.view === "quote") render(); }, 5000);
-}
-/* Na een herlaadbeurt de wachtende offerte weer oppikken. Wie op een prijs
-   staat te wachten hoort die pagina terug te zien, niet de startpagina. */
-function resumeJob(){
-  const id = sessionStorage.getItem('lc_job');
-  if (!id || jobUnsub) return;
-  listenJob(id);
-  if (state.view === "shop") go("quote");
-}
-
-function jobWaitedMin(){
-  const since = state.job?.createdAt || Date.now();
-  return (Date.now() - since) / 60000;
-}
-function jobTimedOut(){
-  return jobWaitedMin() > (pricing().sliceTimeoutMin || 15);
-}
-
-function viewQuote(){
-  const job = state.job;
-  if (!job) return jobUnsub
-    ? `<div style="padding:48px 0;text-align:center;">
-         <p class="muted"><i class="fa-solid fa-spinner" aria-hidden="true"></i> Je prijs wordt berekend — even je opdracht ophalen…</p>
-       </div>`
-    : `<div style="padding:48px 0;text-align:center;">
-         <p class="muted">Er staat geen opdracht te wachten.</p>
-         <button class="btn btn-accent" onclick="go('custom')">Een model uploaden</button>
-       </div>`;
-
-  const st = jobSliceState(job);
-  const t = jobTotals(job);
-  const klaar = st === "klaar";
-  const stuk = st === "mislukt";
-  const mag = klaar || stuk || jobTimedOut();     // afrekenen mag zodra er een prijs vaststaat
-
-  const kop = klaar
-    ? { icon: "circle-check", titel: "Je prijs staat vast",
-        tekst: "Bambu Studio heeft je model geslicet. Onderstaande printtijd en gewicht zijn de echte cijfers, geen schatting." }
-    : stuk
-    ? { icon: "triangle-exclamation", titel: "Slicen lukte niet",
-        tekst: "We konden je model niet door de slicer halen. Je krijgt onze eigen berekening; wij kijken het na voor we printen." }
-    : jobTimedOut()
-    ? { icon: "hourglass-end", titel: "Het duurt langer dan gewoonlijk",
-        tekst: "De slicer antwoordt nu niet. Je kunt bestellen op onze berekening — wijkt de echte prijs af, dan nemen we contact op voor we printen." }
-    : { icon: "gears", titel: "Je prijs wordt berekend",
-        tekst: "Je model gaat door Bambu Studio, precies zoals wij het zouden printen. Dat duurt meestal een paar minuten. Je mag deze pagina open laten staan." };
-
-  const rijen = t.rows.map(({ part: u, price }) => {
-    const s = u.slice || {};
-    const status = s.status || "wachten";
-    return `
-      <div class="admin-row" style="padding:12px 0;border-bottom:1px solid var(--line);">
-        <div class="between" style="gap:12px;flex-wrap:wrap;">
-          <div style="min-width:0;">
-            <div style="font-weight:600;">${esc(u.name)}</div>
-            <div class="muted" style="font-size:11px;">
-              ${u.qty}× &middot; ${esc(u.filament?.name || "")} ${esc(u.filament?.type || "")} &middot; ${esc(u.layerHeight)} &middot; ${u.infill}% vulling
-            </div>
-          </div>
-          <div style="text-align:right;white-space:nowrap;">
-            ${price.sliced
-              ? `<span class="font-mono" style="font-size:12px;">${fmtDuration(price.seconds)} &middot; ${price.grams.toFixed(1)} g</span>`
-              : `<span class="muted" style="font-size:12px;">
-                   <i class="fa-solid fa-${status === "mislukt" ? "circle-xmark" : status === "bezig" ? "spinner" : "clock"}" aria-hidden="true"></i>
-                   ${SLICE_LABEL[status] || status}
-                 </span>`}
-            <div class="font-mono" style="font-size:13px;">${fmtEUR(price.unit * (u.qty || 1))}</div>
-          </div>
-        </div>
-        ${status === "mislukt" && s.error ? `<p class="muted" style="font-size:11px;margin:6px 0 0;">${esc(String(s.error).slice(0,160))}</p>` : ``}
-      </div>`;
-  }).join("");
-
-  return `
-    <div style="padding:32px 0;max-width:760px;margin:0 auto;">
-      <h1 class="font-display" style="font-size:26px;margin:0 0 6px;">
-        <i class="fa-solid fa-${kop.icon}" aria-hidden="true"></i> ${kop.titel}
-      </h1>
-      <p class="muted" style="margin:0 0 20px;max-width:60ch;">${kop.tekst}</p>
-
-      ${!mag ? `<div class="fil-block" style="margin:0 0 18px;">
-        <div class="between" style="gap:12px;">
-          <span><i class="fa-solid fa-spinner" aria-hidden="true"></i> ${SLICE_LABEL[st]}…</span>
-          <span class="muted font-mono" style="font-size:12px;">${Math.floor(jobWaitedMin())} min</span>
-        </div>
-      </div>` : ``}
-
-      <div class="fil-block" style="margin:0;">
-        ${rijen}
-        <div class="kv" style="margin-top:12px;"><span>Filament</span><span class="font-mono">${t.grams.toFixed(0)} g</span></div>
-        <div class="kv"><span>Printtijd</span><span class="font-mono">${fmtDuration(t.seconds)}</span></div>
-        <div style="border-top:1px solid var(--line);margin:12px 0 10px;"></div>
-        <div class="kv"><span>Onderdelen</span><span class="font-mono">${fmtEUR(t.subtotal)}</span></div>
-        ${t.pct ? `<div class="kv"><span>Hoeveelheidskorting ${t.pct}%</span><span class="font-mono" style="color:var(--accent);">&minus;${fmtEUR(t.discount)}</span></div>` : ``}
-        ${t.assembly ? `<div class="kv"><span>Assembleren</span><span class="font-mono">${fmtEUR(t.assembly)}</span></div>` : ``}
-        <div class="kv" style="border-top:1px solid var(--line);margin-top:8px;padding-top:10px;font-size:14px;">
-          <span style="color:var(--ink);font-weight:600;">Totaal</span>
-          <span class="price" style="font-size:20px;">${fmtEUR(t.total)}</span>
-        </div>
-
-        <button class="btn btn-accent" id="quoteCartBtn" style="width:100%;margin-top:14px;${mag ? '' : 'opacity:.5;'}" ${mag ? '' : 'disabled'}>
-          <i class="fa-solid fa-cart-plus" aria-hidden="true"></i>
-          ${mag ? 'Toevoegen aan winkelwagen' : 'Wachten op de prijs…'}
-        </button>
-        <button class="btn btn-ghost btn-sm" id="quoteCancelBtn" style="width:100%;margin-top:8px;justify-content:center;">
-          Deze opdracht laten vallen
-        </button>
-      </div>
-
-      ${state.jobError ? `<p class="muted" style="font-size:12px;margin-top:12px;color:var(--accent);">${esc(firestoreHint(state.jobError))}</p>` : ``}
-    </div>`;
-}
-
-function attachQuoteHandlers(){
-  const add = document.getElementById('quoteCartBtn');
-  if (add) add.onclick = () => {
-    const job = state.job;
-    if (!job) return;
-    const t = jobTotals(job);
-    addToCart({
-      id: job.id, kind: "custom", uploadId: job.id,
-      name: (job.parts || []).length === 1
-        ? "Eigen model — " + job.parts[0].name
-        : `Eigen opdracht — ${(job.parts || []).length} onderdelen`,
-      price: Math.round(t.total * 100) / 100,
-      qty: 1,
-      sliced: t.sliced,
-      jobParts: (job.parts || []).map((u, i) => ({
-        name: u.name, qty: u.qty, filament: u.filament,
-        fileName: u.fileName, index: i, storage: u.storage, storageUrl: u.storageUrl,
-      })),
-      assembled: !!job.assembled,
-    });
-    // De prijs die de klant nu ziet, leggen we vast bij de opdracht zelf.
-    updateDoc(doc(db, "uploads", job.id), {
-      status: "klaar",
-      totals: {
-        parts: t.parts, qty: t.qty, grams: +t.grams.toFixed(1),
-        seconds: Math.round(t.seconds), subtotal: +t.subtotal.toFixed(2),
-        discountPct: t.pct, assembly: +t.assembly.toFixed(2),
-        total: +t.total.toFixed(2), sliced: t.sliced,
-      },
-    }).catch(()=>{});
-    stopJob();
-    go("cart");
-  };
-  const cancel = document.getElementById('quoteCancelBtn');
-  if (cancel) cancel.onclick = () => {
-    const job = state.job;
-    if (job) updateDoc(doc(db, "uploads", job.id), { status: "geannuleerd" }).catch(()=>{});
-    stopJob();
-    notify("Opdracht laten vallen");
-    go("custom");
+    // klopt zolang elk onderdeel echt door de slicer ging
+    sliced: ready.length > 0 && ready.every(p => partEstimate(p)?.sliced),
   };
 }
 
@@ -2812,8 +2830,15 @@ function partCard(p){
           <div>
             <div class="viewer rel" style="aspect-ratio:1/1;">
               <canvas class="mesh3d" data-mesh="${esc(p.id)}"></canvas>
-              <span class="viewer-tag">3D &middot; ${esc(fil?.name || "")}</span>
+              <span class="viewer-tag">${p.viewMode === "lagen"
+                ? `LAGEN &middot; ${partSlice(p)?.layers || 0}`
+                : `3D &middot; ${esc(fil?.name || "")}`}</span>
               <span class="viewer-hint">sleep om te draaien</span>
+              ${partSlice(p) ? `
+                <button class="btn btn-ghost btn-sm viewer-toggle" data-viewmode="${esc(p.id)}"
+                        title="Wissel tussen het model en de lagen zoals wij het printen">
+                  ${p.viewMode === "lagen" ? ic("cube") + " Model" : ic("layer-group") + " Lagen"}
+                </button>` : ``}
             </div>
             <div style="margin-top:10px;">${platePreview(size)}</div>
             ${!fits ? `<p style="font-size:12px;color:var(--accent);margin:8px 0 0;">
@@ -2943,22 +2968,13 @@ function projectSummary(t, canAssemble){
       <button class="btn btn-accent" id="addJobBtn" style="width:100%;"
               ${t.parts === 0 || t.pending ? 'disabled style="width:100%;opacity:.5;"' : ''}>
         ${t.pending
-          ? `<i class="fa-solid fa-spinner" aria-hidden="true"></i> Bezig met analyseren…`
-          : pricing().sliceRequired && bridgeAlive() !== false
-          ? `<i class="fa-solid fa-calculator" aria-hidden="true"></i> Exacte prijs berekenen`
+          ? `<i class="fa-solid fa-spinner" aria-hidden="true"></i> Bezig met slicen…`
           : `<i class="fa-solid fa-cart-plus" aria-hidden="true"></i> Toevoegen aan winkelwagen`}
       </button>
-      ${pricing().sliceRequired ? (bridgeAlive() === false
-        ? `<p class="muted" style="font-size:11px;margin:8px 0 0;">
-             De werkplaats is nu offline, dus rekenen we met bovenstaande berekening.
-             Wij slicen je model alsnog na en nemen contact op als het merkbaar afwijkt.
-           </p>`
-        : `<p class="muted" style="font-size:11px;margin:8px 0 0;">
-             Bovenstaand bedrag is een richtprijs. Wij halen je model door Bambu Studio en
-             rekenen af op de werkelijke printtijd en het werkelijke gewicht.
-           </p>`) : ``}
-      ${t.failed ? `<p class="muted" style="font-size:11px;margin:8px 0 0;color:var(--accent);">
-        ${t.failed} bestand${t.failed > 1 ? 'en' : ''} kon niet gelezen worden en telt niet mee.
+      ${t.sliced ? `<p class="muted" style="font-size:11px;margin:8px 0 0;">
+        <i class="fa-solid fa-layer-group" aria-hidden="true"></i>
+        Deze prijs komt uit je model zelf: we snijden het hier in lagen en tellen
+        de wanden, de boven- en onderkant en de vulling bij elkaar op.
       </p>` : ``}
     </div>`;
 }
@@ -2972,10 +2988,16 @@ function attachMeshViewers(){
     const fil = partFilament(part);
     if (!part.view) part.view = { yaw: 0.7, pitch: 0.45 };
 
-    const paint = () => drawMesh(cv, part.geo, {
-      hex: fil?.hex || "#B8BCC2", finish: fil?.finish || "basic",
-      yaw: part.view.yaw, pitch: part.view.pitch,
-    });
+    const paint = () => {
+      const opts = {
+        hex: fil?.hex || "#B8BCC2", finish: fil?.finish || "basic",
+        yaw: part.view.yaw, pitch: part.view.pitch,
+      };
+      const sl = part.viewMode === "lagen" ? partSlice(part) : null;
+      // de lagen zijn al op ware grootte gesneden, het model nog niet
+      if (sl) drawSlices(cv, part.geo, sl, { ...opts, scale: partFactor(part) });
+      else drawMesh(cv, part.geo, opts);
+    };
     paint();
     // na het laden van het lettertype of een resize klopt de maat pas echt
     requestAnimationFrame(paint);
@@ -3050,6 +3072,8 @@ async function analyseerWachtende(){
         // één object, maar misschien meerdere losse stukken erin
         part.splittable = splitGeo(geos[0]);
       }
+      // meteen doorsnijden, zodat het eerste scherm de prijs al klaar heeft
+      partSlice(part);
     }catch(err){
       part.error = "Kon dit bestand niet uitlezen: " + (err.message || err);
     }finally{
@@ -3061,7 +3085,6 @@ async function analyseerWachtende(){
 }
 
 function attachCustomHandlers(){
-  listenBridge();          // weten of de werkplaats meedraait, vóór er iemand wacht
   herstelOpdracht();       // stond er nog een halfafgewerkte opdracht klaar?
   attachMeshViewers();
   probeStorage();
@@ -3086,6 +3109,15 @@ function attachCustomHandlers(){
     render();
     await analyseerWachtende();
   };
+
+  document.querySelectorAll('[data-viewmode]').forEach(btn=>{
+    btn.onclick = () => {
+      const part = (state.parts || []).find(p => p.id === btn.dataset.viewmode);
+      if (!part) return;
+      part.viewMode = part.viewMode === "lagen" ? "model" : "lagen";
+      render();
+    };
+  });
 
   document.querySelectorAll('[data-split]').forEach(btn=>{
     btn.onclick = () => window.__splitPart(btn.dataset.split);
@@ -3141,11 +3173,6 @@ async function addJobToCart(btn){
   const ready = (state.parts || []).filter(p => p.geo);
   if (!ready.length){ notify("Nog geen bruikbaar onderdeel"); return; }
   const t = projectTotals();
-  // Slaapt de werkplaats-PC, dan heeft wachten geen zin: de klant krijgt onze
-  // eigen berekening en mag meteen door. De opdracht blijft wel op "teslicen"
-  // staan, zodat de brug hem alsnog doorrekent zodra hij weer draait.
-  const sliceOn = !!pricing().sliceRequired;
-  const wantSlice = sliceOn && bridgeAlive() !== false;
 
   btn.disabled = true;
   const totalBytes = ready.reduce((s, p) => s + p.fileSize, 0);
@@ -3229,9 +3256,6 @@ async function addJobToCart(btn){
         grams: est ? +est.grams.toFixed(1) : null,
         seconds: est ? Math.round(est.seconds) : null,
         unitPrice: est ? est.unit : null,
-        // De brug op de werkplaats-PC pikt dit op en vult de echte cijfers in.
-        // Ook als hij nu niet draait: dan gebeurt het zodra hij weer opstart.
-        ...(sliceOn ? { slice: { status: "wachten" } } : {}),
       });
     }
 
@@ -3240,29 +3264,17 @@ async function addJobToCart(btn){
       parts: uploaded,
       assembled: !!state.assembled && t.assembly > 0,
       notes: state.projectNotes || "",
-      status: sliceOn ? "teslicen" : "klaar",
+      status: "klaar",
       totals: {
         parts: t.parts, qty: t.qty, grams: +t.grams.toFixed(1),
         seconds: Math.round(t.seconds), subtotal: +t.subtotal.toFixed(2),
         discountPct: t.pct, assembly: +t.assembly.toFixed(2), total: +t.total.toFixed(2),
-        sliced: false,
+        sliced: !!t.sliced,
       },
       createdAt: Date.now(),
     });
 
     vergeetOpdracht();
-    if (wantSlice){
-      // Niet meteen in de winkelwagen: eerst moet Bambu Studio zeggen wat het
-      // echt kost. De offertepagina luistert mee tot dat antwoord binnen is.
-      state.parts = [];
-      state.assembled = false;
-      state.projectNotes = "";
-      state.job = null;
-      listenJob(jobDoc.id);
-      go("quote");
-      return;
-    }
-
     addToCart({
       id: jobDoc.id, kind: "custom",
       uploadId: jobDoc.id,
@@ -3271,14 +3283,13 @@ async function addJobToCart(btn){
         : `Eigen opdracht — ${uploaded.length} onderdelen`,
       price: Math.round(t.total * 100) / 100,
       qty: 1,
-      sliced: false,
+      sliced: !!t.sliced,
       jobParts: uploaded.map((u, i) => ({
         name: u.name, qty: u.qty, filament: u.filament,
         fileName: u.fileName, index: i, storage: u.storage, storageUrl: u.storageUrl,
       })),
       assembled: !!state.assembled && t.assembly > 0,
     });
-    if (sliceOn) notify("De werkplaats is nu offline — je krijgt onze berekende prijs");
 
     state.parts = [];
     state.assembled = false;
@@ -3298,9 +3309,7 @@ async function addJobToCart(btn){
     }
     notify("Uploaden mislukt: " + msg);
     btn.disabled = false;
-    btn.innerHTML = wantSlice
-      ? '<i class="fa-solid fa-calculator" aria-hidden="true"></i> Exacte prijs berekenen'
-      : '<i class="fa-solid fa-cart-plus" aria-hidden="true"></i> Toevoegen aan winkelwagen';
+    btn.innerHTML = '<i class="fa-solid fa-cart-plus" aria-hidden="true"></i> Toevoegen aan winkelwagen';
   }
 }
 
@@ -3696,7 +3705,7 @@ function viewAdmin(){
               </div>`).join("")}
             <div class="muted font-mono" style="font-size:10px;margin-top:3px;">
               ${i.assembled ? "GEASSEMBLEERD LEVEREN" : "LOS LEVEREN"}
-              ${i.sliced === true ? ` · PRIJS UIT DE SLICE` : i.sliced === false ? ` · <span style="color:var(--accent);">PRIJS IS EEN SCHATTING — NAKIJKEN</span>` : ``}
+              ${i.sliced === false ? ` · <span style="color:var(--accent);">MODEL WAS TE ZWAAR OM TE SNIJDEN — PRIJS NAKIJKEN</span>` : ``}
             </div>
           </div>` : ``}`).join("")}
       <div class="order-foot font-mono" style="font-size:11px;">
@@ -4018,46 +4027,25 @@ const PRICING_FIELDS = [
   ["assemblyBase", "Assembleren, basis (€)", 0.5],
   ["assemblyPerPart", "Assembleren, per extra onderdeel (€)", 0.5],
 ];
-/* De brug op de werkplaats-PC laat elke minuut van zich horen. Zo zie je hier
-   meteen of hij meedraait, in plaats van erachter te komen als een klant wacht. */
-let bridgeUnsub = null;
-function listenBridge(){
-  if (bridgeUnsub) return;
-  bridgeUnsub = onSnapshot(doc(db, "meta", "slicebrug"), snap => {
-    state.bridge = snap.exists() ? snap.data() : null;
-    state.bridgeLoaded = true;
-    if (state.view === "admin" || state.view === "custom") render();
-  }, () => { state.bridgeLoaded = true; });
-}
-/* Draait de brug op dit moment mee? Zolang we het nog niet weten geven we geen
-   antwoord: dan wachten we liever even dan dat we onterecht een schatting
-   doorrekenen. */
-function bridgeAlive(){
-  if (!state.bridgeLoaded) return null;
-  const seen = state.bridge?.lastSeen;
-  return !!seen && (Date.now() - seen) < 180000;   // klopt elke minuut; drie gemist = weg
-}
-function bridgeStatus(){
-  const b = state.bridge;
-  const geleden = b?.lastSeen ? (Date.now() - b.lastSeen) / 1000 : Infinity;
-  const leeft = geleden < 180;                 // een klop per minuut, drie gemist = weg
-  const kleur = leeft ? "var(--accent)" : "var(--muted)";
-  return `
-    <div class="between" style="gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:12px;">
-      <span style="display:flex;align-items:center;gap:8px;">
-        <i class="fa-solid fa-${leeft ? "circle-check" : "circle-xmark"}" style="color:${kleur};" aria-hidden="true"></i>
-        <span>Slice-brug ${leeft ? "draait" : "niet bereikbaar"}</span>
-      </span>
-      <span class="muted font-mono" style="font-size:11px;">
-        ${b?.lastSeen
-          ? (leeft ? `${Math.round(geleden)} s geleden` : `laatst gezien ${new Date(b.lastSeen).toLocaleString("nl-BE")}`)
-          : "nog nooit gestart"}
-      </span>
-    </div>`;
-}
+const SLICER_FIELDS = [
+  ["lineWidth", "Extrusiebreedte (mm)", 0.02],
+  ["walls", "Aantal wanden", 1],
+  ["topShells", "Massieve lagen boven", 1],
+  ["bottomShells", "Massieve lagen onder", 1],
+  ["maxFlow", "Maximale doorvoer (mm³/s)", 1],
+  ["speedOuter", "Buitenwand (mm/s)", 10],
+  ["speedInner", "Binnenwanden (mm/s)", 10],
+  ["speedSolid", "Massieve vlakken (mm/s)", 10],
+  ["speedSparse", "Vulling (mm/s)", 10],
+  ["accelOuter", "Versnelling buitenwand (mm/s²)", 500],
+  ["accelPrint", "Versnelling overig printwerk (mm/s²)", 500],
+  ["travelFactor", "Toeslag verplaatsen (1.08 = 8%)", 0.01],
+  ["layerSec", "Vaste tijd per laag (s)", 0.1],
+];
 
 function viewPricingAdmin(){
   const p = pricing();
+  const sl = slicerSettings();
   return `
     <p class="muted" style="font-size:13px;margin-bottom:16px;max-width:60ch;">
       Hiermee reken je elke prijs door: die van een model op maat en die van een geüpload bestand.
@@ -4075,18 +4063,19 @@ function viewPricingAdmin(){
     </div>
 
     <div class="cart-item" style="margin-bottom:14px;">
-      <h3 class="font-display" style="font-size:14px;margin:0 0 4px;">Slicen met Bambu Studio</h3>
-      <p class="muted" style="font-size:11px;margin:0 0 10px;max-width:60ch;">
-        Staat dit aan, dan gaat elk geüpload model eerst door Bambu Studio op je eigen PC en
-        rekent de shop af op de werkelijke printtijd en het werkelijke gewicht in plaats van
-        op de berekening hierboven. Daarvoor moet de slice-brug draaien (map <span class="font-mono">slice-brug</span>).
-        Staat je PC uit, dan wacht de klant tot de tijdslimiet en krijgt daarna de berekende prijs.
+      <h3 class="font-display" style="font-size:14px;margin:0 0 4px;">Slicer</h3>
+      <p class="muted" style="font-size:11px;margin:0 0 10px;max-width:65ch;">
+        Elk geüpload model wordt hier in de browser in lagen gesneden: wanden, boven- en
+        onderkant en vulling worden echt geteld. Het gewicht klopt daardoor scherp.
+        De printtijd is een berekening met onderstaande waarden van de X1C — komt jouw
+        werkelijke printtijd er structureel naast, stel dan de laatste twee bij.
       </p>
-      ${bridgeStatus()}
-      <label class="checkbox-row"><input type="checkbox" id="prSlice" style="width:auto;margin:0;" ${p.sliceRequired ? 'checked' : ''} /> De klant wacht op de echte prijs uit Bambu Studio</label>
-      <div style="max-width:220px;margin-top:10px;">
-        <label class="field-label">Maximaal wachten (minuten)</label>
-        <input type="number" min="1" step="1" id="prSliceTimeout" value="${p.sliceTimeoutMin}" />
+      <div class="form-grid">
+        ${SLICER_FIELDS.map(([k,label,step])=>`
+          <div>
+            <label class="field-label">${esc(label)}</label>
+            <input type="number" step="${step}" min="0" class="slicerfield" data-key="${k}" value="${sl[k]}" />
+          </div>`).join("")}
       </div>
     </div>
 
@@ -4108,7 +4097,6 @@ function viewPricingAdmin(){
 }
 
 function attachPricingHandlers(){
-  listenBridge();
   const save = document.getElementById('savePricingBtn');
   if (save) save.onclick = async () => {
     const out = { ...pricing() };
@@ -4117,9 +4105,12 @@ function attachPricingHandlers(){
       if (isFinite(v)) out[el.dataset.key] = v;
     });
     out.assemblyEnabled = !!document.getElementById('prAssembly')?.checked;
-    out.sliceRequired = !!document.getElementById('prSlice')?.checked;
-    const wacht = parseInt(document.getElementById('prSliceTimeout')?.value, 10);
-    if (isFinite(wacht) && wacht > 0) out.sliceTimeoutMin = wacht;
+    const slicer = { ...slicerSettings() };
+    document.querySelectorAll('.slicerfield').forEach(el=>{
+      const v = parseFloat(el.value);
+      if (isFinite(v) && v > 0) slicer[el.dataset.key] = v;
+    });
+    out.slicer = slicer;
     const tiers = (out.discountTiers || []).map(t => ({ ...t }));
     document.querySelectorAll('.tierfield').forEach(el=>{
       const i = parseInt(el.dataset.i,10);
@@ -4270,6 +4261,14 @@ function attachAdminHandlers(){
     }
   };
 }
+
+/* Een handvat om in de console (of in een test) te kunnen nakijken wat de
+   slicer van een model maakt: window.__lc.partSlice(__lc.state.parts[0]) */
+window.__lc = {
+  get state(){ return state; },
+  sliceMesh, partSlice, partEstimate, projectTotals,
+  pricing, slicerSettings, render,
+};
 
 /* --------------------------- boot --------------------------- */
 seedIfEmpty();
